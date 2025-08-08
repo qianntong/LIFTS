@@ -2,14 +2,14 @@ import simpy
 import random
 import json
 import polars as pl
-from altrios.lifts import utilities
-from altrios.lifts.single_track_parameters import *
-from altrios.lifts.distances_single_track import *
-from altrios.lifts.dictionary import *
-from altrios.lifts.schedule import *
-from altrios.lifts.single_track_vehicle_performance import *
-import altrios.lifts.distances_single_track as layout
-from altrios.lifts.single_track_vehicle_performance import vehicle_events
+from parameters import *
+from distances import *
+from dictionary import *
+from schedule import *
+from vehicle import *
+import distances as layout
+import utilities
+from vehicle import vehicle_events
 
 K, k, M, N, n_t, n_p, n_r= layout.load_layout_config_from_json()
 

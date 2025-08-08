@@ -1,5 +1,5 @@
 import numpy as np
-from altrios.lifts.single_track_parameters import *
+from parameters import *
 from scipy.stats import triang, uniform
 import math
 import json

@@ -1,6 +1,6 @@
 import pandas as pd
 import polars as pl
-import altrios.lifts as lifts
+import dictionary
 
 def build_train_timetable(train_consist_plan, terminal, swap_arrive_depart, as_dicts):
     df = (train_consist_plan
@@ -29,9 +29,9 @@ def build_train_timetable(train_consist_plan, terminal, swap_arrive_depart, as_d
     if as_dicts:
         return (df
             .with_columns(
-                pl.lit(lifts.dictionary.calculate_oc_number()).alias("oc_number"),
+                pl.lit(dictionary.calculate_oc_number()).alias("oc_number"),
             )
-            .pipe(lifts.dictionary.calculate_truck_number)
+            .pipe(dictionary.calculate_truck_number)
             .to_dicts()
         )
     else:

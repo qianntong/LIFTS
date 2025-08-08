@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from altrios.lifts.schedule import *
+from schedule import *
 from enum import IntEnum
 import json
 

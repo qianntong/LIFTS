@@ -1,8 +1,8 @@
 import pandas as pd
 import utilities
-from single_track_parameters import *
+from parameters import *
 from pathlib import Path
-import altrios.lifts.distances_single_track as layout
+import distances as layout
 
 K, k, M, N, n_t, n_p, n_r= layout.load_layout_config_from_json()
 
