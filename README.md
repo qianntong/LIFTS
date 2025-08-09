@@ -3,13 +3,14 @@ Line-Haul Intermodal Freight Terminal Simulation (LIFTS) is a SimPy-based simula
 
 ## Project Framework
 - **demo.py**: 
-  The highest-level script that manages the entire simulation. It takes input data such as simulation length, resource combinations, etc., and handles the orchestration of the simulation process.
+  - The highest-level script that manages the entire simulation. 
+  - It takes input data such as simulation length, resource combinations, etc., and handles the orchestration of the simulation process.
 
 - **main.py**: 
-  Responsible for executing a single simulation based on the input data. It reads configuration details from the `input/sim_config.json` file, which includes parameters like resource requirements, processing times, and constraints.
-  It includes:
-  - **distance.py**: Supports vehicle distance estimation based on the optimal layout model. This file plays a key role in calculating distances required for simulating vehicle movements within the terminal.
-  - **parameters.py**: Defines operational performance data for each process in the simulation, such as resource usage, processing times, and system efficiency. See `Model Operation Logic` for more details.
+  - Responsible for executing a single simulation based on the input data. It reads configuration details from the `input/sim_config.json` file, which includes parameters like resource requirements, processing times, and constraints.
+  - It includes:
+    - **distance.py**: Supports vehicle distance estimation based on the optimal layout model. This file plays a key role in calculating distances required for simulating vehicle movements within the terminal.
+    - **parameters.py**: Defines operational performance data for each process in the simulation, such as resource usage, processing times, and system efficiency. See `Model Operation Logic` for more details.
 
 - **input**:  
   - **`input/sim_config.json`**: 
@@ -24,7 +25,6 @@ Line-Haul Intermodal Freight Terminal Simulation (LIFTS) is a SimPy-based simula
 - **output**:
   - **`output`**
     Running `main.py` will generate the results, which will be saved in an Excel file located here.
-
   - **`demos/single_track_results`**:
     Running `demo.py` will generate multiple Excel files with various combinations, which can be found here. 
 
@@ -45,5 +45,3 @@ Line-Haul Intermodal Freight Terminal Simulation (LIFTS) is a SimPy-based simula
 
 ## Environment Setting
 Start with the base environment, then run pip install `simpy==4.1.1`, and refer to the `requirements.txt` for additional packages.
-
-## Input and Output
