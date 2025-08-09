@@ -5,14 +5,14 @@ Line-Haul Intermodal Freight Terminal Simulation (LIFTS) is a SimPy-based simula
 - **demo.py**: 
   - The highest-level script that manages the entire simulation. 
   - It takes input data such as simulation length, resource combinations, etc., and handles the orchestration of the simulation process.
-  - Run this file for large scale test.
+  - Run this file for large scale tests.
 
 - **main.py**: 
   - This file is responsible for executing a single simulation based on the input data. It reads configuration details from the `input/sim_config.json` file, which includes parameters like resource requirements, processing times, and distances.
   - It includes:
     - **distance.py**: Supports vehicle distance estimation based on the optimal layout model. This file plays a key role in calculating distances required for simulating vehicle movements within the terminal.
     - **parameters.py**: Defines operational performance data for each process in the simulation, such as resource usage, processing times, and system efficiency. See `Model Operation Logic` for more details.
-    - **vehicle.py**: Defines the vehicle speed based on speed-density functions derived from AnyLogic simulations for intermodal terminals.
+    - **vehicle.py**: Defines the vehicle speed based on speed-density functions for intermodal terminals.
 
 - **input**:  
   - **`input/sim_config.json`**: 
