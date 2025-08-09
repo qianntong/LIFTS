@@ -13,11 +13,6 @@ def load_config():
         raise FileNotFoundError(f"[Error] sim_config.json not found at: {CONFIG_PATH}")
 
 
-# def train_arrival_parameters(train_consist_plan, terminal):
-#     TRAIN_TIMETABLE = build_train_timetable(train_consist_plan, terminal, swap_arrive_depart=False, as_dicts=False)
-#     return TRAIN_TIMETABLE
-
-
 class loggingLevel(IntEnum):
     NONE = 1
     BASIC = 2

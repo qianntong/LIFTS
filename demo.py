@@ -2,6 +2,7 @@ import math
 import random
 import pandas as pd
 import subprocess
+import utilities
 import json
 from distances import *
 from parameters import *
@@ -16,11 +17,16 @@ num_trains_per_day = list(range(1, 2, 1))       # number of trains per day: an i
 num_cranes_list = list(range(1, 2, 1))          # number of cranes in the terminal: an integer within (1, 5)
 num_hostlers_list = list(range(1, 2, 1)) + [24] # numbers of hostlers in the terminal: an integer within (1, 20)
 
-# don't change parameters below
-layout_file = "input/layout.xlsx"
+
+# don't change root/parameters below
+layout_file = utilities.package_root() / "input" / "layout.xlsx"
+sim_config_file = utilities.package_root() / "input" / "sim_config.json"
+train_timetable_file = utilities.package_root() / "input" / "train_timetable.json"
+performance_matrix_file = utilities.package_root() / "output" / "performance_matrix.json"
+output_file = utilities.package_root() / "output" / "performance_results_output.csv"
 containers_per_train = 1
-df_layout = pd.read_excel(layout_file)
 performance_matrix = []
+df_layout = pd.read_excel(layout_file)
 
 
 def generate_train_timetable(train_batch_size, trains_per_day, simulation_days):
@@ -65,7 +71,7 @@ for train_batch_size in train_batch_sizes:
                 daily_throughput = 2 * trains_per_day * train_batch_size * containers_per_train
 
                 train_timetable = generate_train_timetable(train_batch_size, trains_per_day, replicate_times)
-                with open("train_timetable.json", "w") as f:
+                with open(train_timetable_file, "w") as f:
                     json.dump(train_timetable, f)
 
                 layout_params = df_layout[df_layout["train batch (k)"] == train_batch_size * 2].iloc[0]
@@ -75,11 +81,11 @@ for train_batch_size in train_batch_sizes:
                     "layout": {
                         "K": daily_throughput,
                         "k": train_batch_size,
-                        "M": int(M),
-                        "N": int(N),
-                        "n_t": int(n_t),
-                        "n_p": int(n_p),
-                        "n_r": int(n_r)
+                        "M": int(M),    # rows of parking blocks in the yard
+                        "N": int(N),    # columns of parking blocks in the yard
+                        "n_t": int(n_t),    # numbers of lanes from the train side
+                        "n_p": int(n_p),    # numbers of lanes from the parking slot side
+                        "n_r": int(n_r)     # pairs of 'back-to-back' parking slots within a parking block
                     },
                     "vehicles": {
                         "simulation_duration": total_simulation_length,
@@ -88,7 +94,7 @@ for train_batch_size in train_batch_sizes:
                     }
                 }
 
-                with open("sim_config.json", "w") as f:
+                with open(sim_config_file, "w") as f:
                     json.dump(config, f)
 
                 # update state
@@ -100,7 +106,7 @@ for train_batch_size in train_batch_sizes:
 
                 subprocess.run(["python", "main.py"], check=True)
 
-                with open("output/performance_matrix.json", "r") as f:
+                with open(performance_matrix_file, "r") as f:
                     performance_data = json.load(f)
 
                 ic_avg_time = performance_data["ic_avg_time"]
@@ -136,5 +142,5 @@ columns = [
 ]
 
 df = pd.DataFrame(performance_matrix, columns=columns)
-df.to_excel("output/npf_performance_results.xlsx", index=False)
+df.to_excel(output_file, index=False)
 print("Done!")
