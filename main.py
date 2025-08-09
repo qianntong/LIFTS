@@ -5,7 +5,6 @@ import polars as pl
 from parameters import *
 from distances import *
 from dictionary import *
-from schedule import *
 from vehicle import *
 import distances as layout
 import utilities
@@ -23,7 +22,7 @@ class Terminal:
         self.in_gates = simpy.Resource(env, state.IN_GATE_NUMBERS)
         self.out_gates = simpy.Resource(env, state.OUT_GATE_NUMBERS)
         self.oc_store = simpy.Store(env)
-        self.parking_slots = simpy.Store(env, K)   # todo: parking_slots capacity
+        self.parking_slots = simpy.Store(env, K)
         self.chassis = simpy.FilterStore(env, capacity=chassis_count)
         self.hostlers = simpy.Store(env, capacity=state.HOSTLER_NUMBER)
         self.truck_store = simpy.Store(env, capacity=truck_capacity)
@@ -76,7 +75,7 @@ def handle_train_departure(env, train_schedule, train_id, track_id):
 
 
 def save_vehicle_and_performance_metrics(state, ic_avg_delay, oc_avg_delay):
-    out_path = utilities.package_root() / 'demos' / 'single_track_results'
+    out_path = utilities.package_root() / 'output'
 
     container_excel_path = out_path / f"{state.CRANE_NUMBER}C-{state.HOSTLER_NUMBER}H_container_throughput_{K}_batch_size_{k}.xlsx"
     vehicle_excel_path = out_path / f"{state.CRANE_NUMBER}C-{state.HOSTLER_NUMBER}H_vehicle_throughput_{K}_batch_size_{k}.xlsx"
@@ -183,31 +182,6 @@ def truck_arrival(env, terminal, train_schedule, all_trucks_arrived_event):
             env.process(empty_truck(env, train_schedule, terminal, truck_id))
 
     all_trucks_arrived_event.succeed()  # if all_trucks_arrived_event is triggered, train is allowed to enter
-
-
-# def crane_unload_process(env, terminal, train_schedule, all_oc_prepared, oc_needed, total_ic, all_ic_picked, all_ic_unload_event):
-#     global state
-#     ic_unloaded_count = 0
-#
-#     for ic_id in range(state.IC_NUM, state.IC_NUM + total_ic):
-#         crane_id = yield terminal.cranes.get()
-#         # print(f"Time {env.now}: Crane starts unloading IC {ic_id}")
-#         crane_unload_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
-#         yield env.timeout(crane_unload_time)
-#         record_event(ic_id, 'crane_unload', env.now)
-#
-#         # print(f"Time {env.now}: Crane {crane_id} finishes unloading IC {ic_id} onto chassis")
-#         emissions = emission_calculation('loaded', 'load', 'crane', crane_id, crane_unload_time)
-#         record_vehicle_event('crane', crane_id, f'unload_{ic_id}', 'unloaded', 'load', crane_unload_time, emissions, 'end', env.now)
-#
-#         terminal.chassis.put(ic_id)
-#         terminal.cranes.put(crane_id)
-#
-#         ic_unloaded_count += 1
-#         env.process(container_process(env, terminal, train_schedule, all_oc_prepared, oc_needed, all_ic_unload_event, all_ic_picked))
-#
-#         if ic_unloaded_count == total_ic:
-#             all_ic_unload_event.succeed()
 
 
 def crane_unload_process(env, terminal, train_schedule, all_oc_prepared, oc_needed, total_ic, all_ic_picked, all_ic_unload_event):
@@ -421,27 +395,6 @@ def truck_exit(env, terminal, truck_id, ic_id):
     yield terminal.truck_store.put(truck_id)
 
 
-# def crane_load_process(env, terminal, start_load_event, end_load_event):
-#     global state
-#     yield start_load_event
-#     # print(f"Time {env.now}: Starting loading process onto the train.")
-#
-#     while len([item for item in terminal.chassis.items if isinstance(item, str) and "OC" in item]) > 0:  # if there still has OC on chassis
-#         crane_id = yield terminal.cranes.get()
-#         oc = yield terminal.chassis.get(lambda x: isinstance(x, str) and "OC" in x)  # obtain an OC from chassis
-#         # print(f"Time {env.now}: Crane {crane_id} starts loading {oc} onto the train.")
-#         crane_load_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
-#         yield env.timeout(crane_load_time)
-#         record_event(oc, 'crane_load', env.now)
-#         # print(f"Time {env.now}: Crane finished loading {oc} onto the train.")
-#         terminal.cranes.put(crane_id)
-#         emissions = emission_calculation('loaded', 'load', 'crane', crane_id, crane_load_time)
-#         record_vehicle_event('crane', crane_id, f'load_{oc}', 'loaded', 'load', crane_load_time, emissions, 'end', env.now)
-#
-#     # print(f"Time {env.now}: All OCs loaded. Train is fully loaded and ready to depart.")
-#     # print("Containers on chassis (after loading OCs):", terminal.chassis.items)
-#     end_load_event.succeed()
-
 def crane_load_process(env, terminal, start_load_event, end_load_event):
     global state
     yield start_load_event
@@ -466,7 +419,7 @@ def crane_load_process(env, terminal, start_load_event, end_load_event):
             # release crane
             terminal.cranes.put(crane_id)
 
-    num_cranes = len(terminal.cranes.items)  # 如果 terminal.cranes 是 Store
+    num_cranes = len(terminal.cranes.items)
     for _ in range(num_cranes):
         env.process(load_oc(env))
 
@@ -568,7 +521,7 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     env = simpy.Environment()
 
     # # Train timetable
-    with open("train_timetable.json", "r") as f:
+    with open("input/train_timetable.json", "r") as f:
         train_timetable = json.load(f)
 
     # Initialize train status in the terminal
@@ -587,7 +540,7 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
         train_departed_event = next_departed_event  # Update the departure event for the next train
 
     # Simulation duration: time includes warm-up and cool down
-    with open("sim_config.json", "r") as f:
+    with open("input/sim_config.json", "r") as f:
         sim_config = json.load(f)
     total_simulation_length = sim_config["vehicles"]["simulation_duration"]
     env.run(until=total_simulation_length)
@@ -633,38 +586,13 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
 
     container_data["container_processing_time"] = container_data.apply(compute_processing_time, axis=1)
 
-    # # ==== 4. Add full vs. remainder ====
-    # config_path = "/Users/qianqiantong/PycharmProjects/altrios-private/altrios/python/altrios/lifts/sim_config.json"
-    # with open(config_path, 'r') as f:
-    #     config = json.load(f)
-    #
-    # daily_throughput = config['layout']['K']
-    # train_batch_size = config['layout']['k']
-    # simulation_hours = config['vehicles']['simulation_duration']
-    # simulation_days = simulation_hours / 24
-    #
-    # num_ic = int(daily_throughput / 2)
-    # num_trains = math.ceil(num_ic / train_batch_size)
-    #
-    # raw_ids = container_data["container_id"].astype(str)
-    # id_nums = raw_ids.apply(lambda x: int(x.split("-")[-1]) if "-" in x else int(x))
-    #
-    # containers = int(daily_throughput / 2)
-    # relative_id = id_nums % containers
-    # bound_id = train_batch_size * (num_trains - 1)
-    #
-    # container_data["location"] = ["full" if rid <= bound_id else "remainder" for rid in relative_id]
-
     # ==== 4. Add first_oc_pickup_time for OC containers ====
 
-    # 确保 container_id 是字符串且非空
     container_data = container_data[container_data["container_id"].notna()].copy()
     container_data["container_id"] = container_data["container_id"].astype(str)
 
-    # 筛选 OC container
     df_oc = container_data[container_data['container_id'].str.startswith("OC-")].copy()
 
-    # 找出每个 train_depart 中最早的 hostler_pickup 时间
     first_pickup_per_train = (
         df_oc.groupby("train_depart")["hostler_pickup"]
         .min()
@@ -672,10 +600,8 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
         .rename(columns={"hostler_pickup": "first_oc_pickup_time"})
     )
 
-    # 合并 first_oc_pickup_time 回 OC 数据
     df_oc = df_oc.merge(first_pickup_per_train, on="train_depart", how="left")
 
-    # 再将该列合并回 container_data
     container_data = container_data.merge(
         df_oc[["container_id", "first_oc_pickup_time"]],
         on="container_id",
@@ -706,31 +632,31 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     oc_avg_delay = oc_df["oc_delay_time"].mean()
 
     single_run = save_vehicle_and_performance_metrics(state, ic_avg_delay, oc_avg_delay)
-    print("Done!")
 
     return single_run
 
 
 if __name__ == "__main__":
     single_run = run_simulation(
-        train_consist_plan=pl.read_csv(utilities.package_root() / 'demos' / 'starter_demo' / 'train_consist_plan.csv'),
+        train_consist_plan=pl.read_csv(utilities.package_root() / 'input' / 'train_consist_plan.csv'),
         terminal="Allouez",
-        out_path=utilities.package_root() / 'demos' / 'single_track_results'
+        out_path=utilities.package_root() / 'output'
     )
 
-    # Performance Matrix
-    output = {
-        "single_run": single_run,
-        "ic_avg_time": single_run[0],
-        "ic_avg_delay": single_run[1],
-        "total_ic_avg_time": single_run[2],
-        "oc_avg_time": single_run[3],
-        "oc_avg_delay": single_run[4],
-        "total_oc_avg_time": single_run[5],
-        "ic_energy": single_run[6],
-        "oc_energy": single_run[7],
-        "total_energy": single_run[8]
-    }
-
-    with open("performance_matrix.json", "w") as f:
-        json.dump(output, f)
+    print("Done!")
+    # # Performance Matrix
+    # output = {
+    #     "single_run": single_run,
+    #     "ic_avg_time": single_run[0],
+    #     "ic_avg_delay": single_run[1],
+    #     "total_ic_avg_time": single_run[2],
+    #     "oc_avg_time": single_run[3],
+    #     "oc_avg_delay": single_run[4],
+    #     "total_oc_avg_time": single_run[5],
+    #     "ic_energy": single_run[6],
+    #     "oc_energy": single_run[7],
+    #     "total_energy": single_run[8]
+    # }
+    #
+    # with open("performance_matrix.json", "w") as f:
+    #     json.dump(output, f)

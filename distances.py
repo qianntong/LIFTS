@@ -4,7 +4,7 @@ from scipy.stats import triang, uniform
 import math
 import json
 
-def load_layout_config_from_json(path="sim_config.json"):
+def load_layout_config_from_json(path="input/sim_config.json"):
     import json
     global K, k, M, N, n_t, n_p, n_r
     with open(path, "r") as f:

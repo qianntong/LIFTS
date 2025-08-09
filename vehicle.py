@@ -7,7 +7,7 @@ import distances as layout
 K, k, M, N, n_t, n_p, n_r= layout.load_layout_config_from_json()
 
 package_root = utilities.package_root()
-out_path = package_root / 'demos' / 'single_track_results'
+out_path = package_root / 'output'
 out_path.mkdir(parents=True, exist_ok=True)
 
 # Dictionary to store vehicle events

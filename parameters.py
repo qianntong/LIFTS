@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from schedule import *
 from enum import IntEnum
 import json
+import polars as pl
 
-CONFIG_PATH = 'sim_config.json'
+CONFIG_PATH = 'input/sim_config.json'
 
 def load_config():
     try:
@@ -13,9 +13,9 @@ def load_config():
         raise FileNotFoundError(f"[Error] sim_config.json not found at: {CONFIG_PATH}")
 
 
-def train_arrival_parameters(train_consist_plan, terminal):
-    TRAIN_TIMETABLE = build_train_timetable(train_consist_plan, terminal, swap_arrive_depart=False, as_dicts=False)
-    return TRAIN_TIMETABLE
+# def train_arrival_parameters(train_consist_plan, terminal):
+#     TRAIN_TIMETABLE = build_train_timetable(train_consist_plan, terminal, swap_arrive_depart=False, as_dicts=False)
+#     return TRAIN_TIMETABLE
 
 
 class loggingLevel(IntEnum):
@@ -127,8 +127,6 @@ class LiftsState:
 
     def initialize_from_consist_plan(self, train_consist_plan):
         self.train_consist_plan = train_consist_plan
-        self.TRAIN_TIMETABLE = train_arrival_parameters(self.train_consist_plan, self.terminal)  # a dictionary
-
 
     def initialize(self):
         self.CRANE_LOAD_CONTAINER_TIME_MEAN = (self.CONTAINERS_PER_CAR * (
