@@ -80,7 +80,7 @@ def save_energy_to_excel(state):
                                'Total Emissions': 'Total Energy Consumption'}, inplace=True)
 
     file_name = f"{state.CRANE_NUMBER}C-{state.HOSTLER_NUMBER}H_vehicle_throughput_{K}_batch_size_{k}.xlsx"
-    file_path = out_path / file_name
+    file_path = out_path / 'double_track_results'/ file_name
 
     with pd.ExcelWriter(file_path) as writer:
         for vehicle_type, df in df_logs.items():
@@ -131,3 +131,18 @@ def calculate_vehicle_energy(vehicle_excel_path):
     total_energy = average_row['Total Energy Consumption'].values[0]
 
     return ic_energy, oc_energy, total_energy
+
+
+def print_and_save_metrics(ic_time, oc_time, total_time, ic_energy, oc_energy, total_energy):
+    print("*" * 100)
+    print("Intermodal Terminal Performance Matrix")
+    print(f"IC average processing time: {ic_time:.4f}")
+    print(f"OC average processing time: {oc_time:.4f}")
+    print(f"Average container processing time: {total_time:.4f}")
+    print(f"IC average energy consumption: {ic_energy:.4f}")
+    print(f"OC average energy consumption: {oc_energy:.4f}")
+    print(f"Average container energy consumption: {total_energy:.4f}")
+    print("*" * 100)
+
+    single_run = [ic_time, oc_time, total_time, ic_energy, oc_energy, total_energy]
+    return single_run

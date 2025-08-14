@@ -20,6 +20,51 @@ class loggingLevel(IntEnum):
 
 
 @dataclass
+class container:
+    type: str = 'Outbound'
+    id: int = 0
+    train_id: int = 0
+
+    def to_string(self) -> str:
+        if self.type == 'Outbound':
+            prefix = 'OC'
+        elif self.type == 'Inbound':
+            prefix = 'IC'
+        else:
+            prefix = 'C'
+        return f"{prefix}-{self.id}-Train-{self.train_id}"
+
+
+@dataclass
+class crane:
+    type: str = 'Diesel'
+    id: int = 0
+    track_id: int = 0
+
+    def to_string(self) -> str:
+        return f'{self.id}-Track-{self.track_id}-{self.type}'
+
+
+@dataclass
+class truck:
+    type: str = 'Diesel'
+    id: int = 0
+    train_id: int = 0
+
+    def to_string(self) -> str:
+        return f'{self.id}-Track-{self.train_id}-{self.type}'
+
+
+@dataclass
+class hostler:
+    type: str = 'Diesel'
+    id: int = 0
+
+    def to_string(self) -> str:
+        return f'{self.id}-{self.type}'
+
+
+@dataclass
 class LiftsState:
     # Fixed: Simulation files and hyperparameters
     log_level: loggingLevel = loggingLevel.DEBUG
@@ -107,6 +152,23 @@ class LiftsState:
     SIDE_PICK_RATES: dict[str, dict[str, float]] = field(
         default_factory=lambda: {
             'Side': {'Diesel': 2.88, 'Electric': 0.21},
+        }
+    )
+
+    # todo: double-track rate alignments
+    IDLE_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
+        default_factory=lambda: {
+            'Truck': {'Diesel': 5.2, 'Electric': 2.4},
+            'Hostler': {'Diesel': 6.2, 'Electric': 2.4},
+            'Crane': {'Diesel': 40.3, 'Hybrid': 30.5},
+        }
+    )
+
+    FULL_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
+        default_factory=lambda: {
+            'Truck': {'Diesel': 20.7, 'Electric': 10.2},
+            'Hostler': {'Diesel': 15.7, 'Electric': 10.2},
+            'Crane': {'Diesel': 60.3, 'Hybrid': 50.5},
         }
     )
 

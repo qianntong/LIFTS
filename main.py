@@ -8,7 +8,7 @@ from distances import *
 from parameters import *
 
 # user-input parameters
-simulation_days = 20                            # total simulation time: warm-up + simulation + cool-down time (days)
+simulation_days = 20                            # total simulation time = warm-up + simulation + cool-down time (days)
 total_simulation_length = 24 * simulation_days  # total simulation time (hours)
 replicate_times = 3                             # observation window (days)
 simulation_duration = replicate_times * 24      # observation window (hours)
@@ -81,8 +81,8 @@ for train_batch_size in train_batch_sizes:
                     "layout": {
                         "K": daily_throughput,
                         "k": train_batch_size,
-                        "M": int(M),    # rows of parking blocks in the yard
-                        "N": int(N),    # columns of parking blocks in the yard
+                        "M": int(M),        # rows of parking blocks in the yard
+                        "N": int(N),        # columns of parking blocks in the yard
                         "n_t": int(n_t),    # numbers of lanes from the train side
                         "n_p": int(n_p),    # numbers of lanes from the parking slot side
                         "n_r": int(n_r)     # pairs of 'back-to-back' parking slots within a parking block
@@ -104,7 +104,7 @@ for train_batch_size in train_batch_sizes:
                 print("-" * 100)
                 print(f"Throughput: {daily_throughput}, batch size: {train_batch_size}, cranes: {cranes}, hostlers: {hostlers}")
 
-                subprocess.run(["python", "single_track_simulation.py"], check=True)
+                subprocess.run(["python", "single_train_simulation.py"], check=True)
 
                 with open(performance_matrix_file, "r") as f:
                     performance_data = json.load(f)

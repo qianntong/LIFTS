@@ -7,7 +7,7 @@ Line-Haul Intermodal Freight Terminal Simulation (LIFTS) is a SimPy-based simula
   - It takes input data such as simulation length, resource combinations, etc., and handles the orchestration of the simulation process.
   - Run this file for large scale tests.
 
-- **single_track_simulation.py**: 
+- **single_train_simulation.py**: 
   - This file is responsible for executing a single simulation based on the input data. It reads configuration details from the `input/sim_config.json` file, which includes parameters like resource requirements, processing times, and distances.
   - It includes:
     - **distance.py**: Supports vehicle distance estimation based on the optimal layout model. This file plays a key role in calculating distances required for simulating vehicle movements within the terminal.
@@ -34,6 +34,7 @@ Line-Haul Intermodal Freight Terminal Simulation (LIFTS) is a SimPy-based simula
  ![img.png](plots/img.png)
 
 ## Model Assumptions
+For `single_train_simulation.py`,
 1. Single-track operation is simulated.
 2. Process one train at a time.
 3. Numbers of OCs and ICs are equal.

@@ -58,24 +58,15 @@ def handle_train_departure(env, train_schedule, train_id, track_id):
 
     if env.now < train_schedule["departure_time"]:
         print(f"Time {env.now}: [EARLY] Train {train_schedule['train_id']} departs from the track {track_id}.")
-        # delay_time = 0
     elif env.now == train_schedule["departure_time"]:
         print(f"Time {env.now}: [In Time] Train {train_schedule['train_id']} departs from the track {track_id}.")
-        # delay_time = 0
     else:
         delay_time = env.now - train_schedule["departure_time"]
         print(f"Time {env.now}: [DELAYED] Train {train_schedule['train_id']} has been delayed for {delay_time} hours from the track {track_id}.")
 
-    # state.delay_list[train_id] = delay_time
-    # total_delay_time = sum(state.delay_list.values())
-
-    # print(f"Total delay time for all trains is {total_delay_time} hours.")
-
-    # return delay_time
-
 
 def save_vehicle_and_performance_metrics(state, ic_avg_delay, oc_avg_delay):
-    out_path = utilities.package_root() / 'output'
+    out_path = utilities.package_root() / 'output' / 'single_track_results'
 
     container_excel_path = out_path / f"{state.CRANE_NUMBER}C-{state.HOSTLER_NUMBER}H_container_throughput_{K}_batch_size_{k}.xlsx"
     vehicle_excel_path = out_path / f"{state.CRANE_NUMBER}C-{state.HOSTLER_NUMBER}H_vehicle_throughput_{K}_batch_size_{k}.xlsx"
@@ -153,7 +144,6 @@ def empty_truck(env, train_schedule, terminal, truck_id):
     global state
     with terminal.in_gates.request() as gate_request:
         yield gate_request
-        # print(f"Time {env.now}: Truck {truck_id} passed the in-gate with empty loading")
         # Note the arrival of empty trucks will not be recorded due to excel output dimensions
         truck_travel_time = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min,
                                                   d_t_max)
@@ -169,9 +159,6 @@ def truck_arrival(env, terminal, train_schedule, all_trucks_arrived_event):
 
     trucks = [(i, "diesel") for i in range(num_diesel)] + \
              [(i + num_diesel, "electric") for i in range(num_electric)]
-
-    # print(f"truck platoon has total {len(trucks)} including {trucks}")
-    # print(f"oc store has {terminal.oc_store.items}")
 
     for truck_id in trucks:
         yield env.timeout(0)  # Assume truck arrives not impact on system, not random.expovariate(arrival_rate)
@@ -640,7 +627,7 @@ if __name__ == "__main__":
     single_run = run_simulation(
         train_consist_plan=pl.read_csv(utilities.package_root() / 'input' / 'train_consist_plan.csv'),
         terminal="Allouez",
-        out_path=utilities.package_root() / 'output'
+        out_path=utilities.package_root() / 'output' / 'single_track_results'
     )
 
     print("Done!")
