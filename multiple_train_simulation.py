@@ -106,31 +106,26 @@ def truck_entry(env, terminal, truck, oc, train_schedule):
     global state
     ingate_request = terminal.in_gates.request()
     yield ingate_request
-    # if state.log_level > loggingLevel.NONE:
-    #     print(f"Time {env.now:.3f}: {truck} loaded with {oc} passed the in-gate and is entering the terminal.")
 
     # Assume each truck takes 1 OC, and drop OC to the closest parking lot according to triangular distribution
     # Assign IDs for OCs
     truck_travel_time = state.TRUCK_INGATE_TIME + random.uniform(0, state.TRUCK_INGATE_TIME_DEV)
     yield env.timeout(truck_travel_time)
     terminal.in_gates.release(ingate_request)
-    emissions = emission_calculation('loaded', 'truck', truck, truck_travel_time)
+    # emissions = emission_calculation('loaded', 'truck', truck, truck_travel_time)
     # record_vehicle_event('truck', truck, f'entry_OC_{oc.id}', 'loaded', truck_travel_time, emissions, 'end', env.now)
-    # if state.log_level > loggingLevel.NONE:
-    #     print(f"Time {env.now:.3f}: {truck} placed OC {oc} at parking slot.")
     record_container_event(oc.to_string(), 'truck_arrival', env.now)
 
-    # Calculate truck speed according to the current density
-    truck_travel_time = simulate_truck_travel(truck, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
-    emissions = emission_calculation('loaded', 'truck', truck, truck_travel_time)
+    ## Calculate truck speed according to the current density
+    # truck_travel_time = simulate_truck_travel(truck, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
+    # emissions = emission_calculation('loaded', 'truck', truck, truck_travel_time)
     # record_vehicle_event('truck', truck, f'entry_OC_{oc.id}', 'loaded', truck_travel_time, emissions, 'end', env.now)
 
     # Assume each truck takes 1 OC, and drop OC to the closest parking lot according to triangular distribution
     # Assign IDs for OCs
-    # print(f"Time {env.now}: Truck {truck} placed OC {oc} at parking slot.")
     record_container_event(oc.to_string(), 'truck_dropoff', env.now)
-    yield terminal.parking_slots.put(oc)
-    emissions = emission_calculation('loaded', 'truck', truck, truck_travel_time)
+    terminal.parking_slots.put(oc)
+    # emissions = emission_calculation('loaded', 'truck', truck, truck_travel_time)
     # record_vehicle_event('truck', truck, f'dropoff_OC_{oc.id}', 'loaded', truck_travel_time, emissions, 'end', env.now)
 
 
@@ -181,16 +176,8 @@ def truck_arrival(env, terminal, train_schedule):
         yield terminal.truck_store.put(this_truck)
 
     terminal.all_trucks_arrived_events[train_schedule['train_id']].succeed()  # if all oc are dropped by trucks, train is allowed to enter
-    print(f"Trucks: all OC for Train-{train_schedule['train_id']} have prepared. Train can enter")
+    print(f"Trucks: all OC for Train-{train_schedule['train_id']} have prepared. Train-{train_schedule['train_id']} can enter.")
 
-
-# def check_ic_picked_complete(env, terminal, train_schedule):
-#     inbound_count = sum(getattr(item, 'type', None) == 'Inbound' and getattr(item, 'train_id', None) == train_schedule['train_id'] for item in terminal.chassis.items)
-#
-#     if inbound_count == 0:
-#         if terminal.train_ic_unload_events[train_schedule['train_id']].triggered:
-#             terminal.train_ic_picked_events[train_schedule['train_id']].succeed()
-#             print(f"Time {env.now:.3f}: All ICs for Train-{train_schedule['train_id']} have been picked up by hostlers.")
 
 def check_ic_picked_complete(env, terminal, train_schedule):
     train_id = train_schedule['train_id']
@@ -214,62 +201,16 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
         ic = yield terminal.train_ic_stores.get(lambda x: x.train_id == train_id)
 
         yield env.timeout(state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME))
-
-        # print("Crane", crane)
+        record_container_event(ic.to_string(), 'crane_unload', env.now)
         yield terminal.cranes.put(crane)
-        # print("ic", ic)
         yield terminal.chassis.put(ic)
-        # print("chassis", terminal.chassis.items)
 
         env.process(container_process(env, terminal, train_schedule))
         unloaded += 1
 
-    # print("unloaded", unloaded)
-    # print("n", n)
     if unloaded == n and not terminal.train_ic_unload_events[train_id].triggered:
         terminal.train_ic_unload_events[train_id].succeed()
         print(f"[Event] All ICs for train-{train_schedule['train_id']} have been unloaded.")
-
-
-# def crane_unload_process(env, terminal, train_schedule, track_id):
-#     global state
-#     # terminal.train_ic_unload_count[train_schedule['train_id']] = 0
-#
-#     terminal.total_ic[train_schedule['train_id']] = train_schedule["full_cars"]
-#
-#     start_id = terminal.IC_COUNT[train_schedule['train_id']]
-#     end_id = terminal.IC_COUNT[train_schedule['train_id']] + terminal.total_ic[train_schedule['train_id']]
-#
-#     for ic_id in range(start_id, end_id):
-#         crane_item = yield terminal.cranes.get(lambda x: x.track_id == track_id)
-#         ic_item = yield terminal.train_ic_stores.get(lambda x: x.train_id == train_schedule['train_id'])  # pick up the first ic_item, all ic there
-#         print(f"unload ic_item", ic_item.to_string())
-#         # print(f"Time {env.now:.3f}: Crane {crane_item.to_string()} starts unloading IC-{ic_item.id}-Train-{train_schedule['train_id']}")
-#         crane_unload_move_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
-#         yield env.timeout(crane_unload_move_time)
-#         record_container_event(ic_item.to_string(), 'crane_unload', env.now)
-#         # record_vehicle_event('crane', crane_item, f"unload_IC_{ic_item.id}-Train-{train_schedule['train_id']}", 'full',
-#         #                      crane_unload_move_time,
-#         #                      crane_unload_move_time * state.FULL_EMISSIONS_RATES['Crane'][crane_item.type], 'end',
-#         #                      env.now)
-#         # print(f"Time {env.now:.3f}: Crane {crane_item.to_string()} finishes unloading IC-{ic_item.id}-Train-{train_schedule['train_id']} onto chassis")
-#         yield terminal.chassis.put(ic_item)
-#
-#         # print(f"Before put: cranes {len(terminal.cranes.items)} / crane capacity {terminal.cranes.capacity}")
-#         yield terminal.cranes.put(crane_item)
-#         # print(f"After put: cranes {len(terminal.cranes.items)} / crane capacity {terminal.cranes.capacity}")
-#         # once a crane drop off an IC, hostler picks up IC
-#         env.process(container_process(env, terminal, train_schedule))
-#
-#     # if terminal.train_ic_unload_count[train_schedule['train_id']] == terminal.total_ic[train_schedule['train_id']], train_ic_unload_events triggered
-#     print("train_id", train_schedule['train_id'])
-#     print("chassis:",terminal.chassis.items)
-#     current_ic_num = sum((getattr(item, 'type', None) == 'Inbound') and (getattr(item, 'train_id', None) == train_schedule['train_id']) for item in terminal.chassis.items)
-#     print("current_ic_num", current_ic_num)
-#     if current_ic_num == terminal.total_ic[train_schedule['train_id']]:
-#         terminal.train_ic_unload_events[train_schedule['train_id']].succeed()
-#         print(f"Time {env.now:.3f}: For Train-{train_schedule['train_id']}, all ICs have been unloaded onto the chassis.")
-#         # check_ic_picked_complete(env, terminal, train_schedule)
 
 
 def get_hostler(terminal):
@@ -303,6 +244,7 @@ def container_process(env, terminal, train_schedule):
     3. The hostler picks up an OC, and drops off OC at the chassis.
     4. Once all OCs are prepared (all_oc_prepared), triggers the event of crane loading.
     '''
+
     # 1. An IC is waiting to be picked up by a hostler
     ic = yield terminal.chassis.get(lambda x: x.type == 'Inbound')
     assigned_hostler = yield get_hostler(terminal)
@@ -313,108 +255,78 @@ def container_process(env, terminal, train_schedule):
     yield env.timeout(hostler_travel_time_to_track)
 
     # 3. hostler travel time 2: the loaded hostler going to drop off the IC
-    # current_veh_num = 2 * state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items) - len(terminal.active_hostlers.items)
-    # hostler_travel_time_to_parking =  simulate_hostler_travel(assigned_hostler.to_string(), current_veh_num,total_lane_length, d_h_min, d_h_max)
     yield env.timeout(0.1)
     terminal.parking_slots.put(ic)
     record_container_event(ic.to_string(), 'hostler_pickup', env.now)
-    # emissions = emission_calculation('empty', 'hostler', hostler, hostler_travel_time_to_parking + hostler_travel_time_to_track)
-    # record_vehicle_event('hostler', assigned_hostler, f"pickup_IC_{ic.id}-Train-{train_schedule['train_id']}", 'empty',
-    #                      hostler_travel_time_to_parking + hostler_travel_time_to_track, emissions, 'end', env.now)
 
     check_ic_picked_complete(env, terminal, train_schedule)
     yield terminal.train_ic_unload_events[train_schedule['train_id']]
 
     # 3. Hostler drop off IC to parking slot
-    # current_veh_num = state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items)
-    # hostler_travel_time_to_parking = simulate_hostler_travel(assigned_hostler.to_string(), current_veh_num, total_lane_length, d_h_min, d_h_max)
-    yield env.timeout(0.1)  # update: time calculated by density-travel_time function
+    yield env.timeout(0.1)  # side-pick
     record_container_event(ic.to_string(), 'hostler_dropoff', env.now)
-    # emissions = emission_calculation('loaded', 'hostler', assigned_hostler, hostler_travel_time_to_parking)
-    # record_vehicle_event('hostler', assigned_hostler, f"dropoff_IC_{ic.id}-Train-{train_schedule['train_id']}",
-    #                      'loaded', hostler_travel_time_to_parking, emissions, 'end', env.now)
 
     # 4. Assign a truck to pick up IC
     assigned_truck = yield terminal.truck_store.get()
     ic = yield terminal.parking_slots.get(lambda x: x.type == 'Inbound')
-    truck_travel_time = simulate_truck_travel(assigned_truck, train_schedule, terminal, total_lane_length, d_t_min,
-                                              d_t_max)
     record_container_event(ic.to_string(), 'truck_pickup', env.now)
-    emissions = emission_calculation('empty', 'truck', assigned_truck, truck_travel_time)
-    # record_vehicle_event('truck', assigned_truck, f"pickup_{ic.to_string()}", 'empty', truck_travel_time, emissions,
-    #                      'end', env.now)
     env.process(truck_exit(env, terminal, assigned_truck, ic, train_schedule))
 
-    # 5. Assign the hostler to pick up an OC
-    if sum(item.type == 'Outbound' for item in terminal.parking_slots.items) > 0:
-        oc = yield terminal.parking_slots.get(lambda x: x.type == 'Outbound')
-        # print(f"Time {env.now:.3f}: Hostler {assigned_hostler} is going to pick up OC {oc} from a parking slot")
-
-        # 5.1 The hostler picks up an OC
-        hostler_reposition_travel_time = simulate_reposition_travel(assigned_hostler, current_veh_num, total_lane_length, d_h_min, d_h_max)
-        yield env.timeout(hostler_reposition_travel_time)
-        record_container_event(oc.to_string(), 'hostler_pickup', env.now)
-        emissions = emission_calculation('empty', 'hostler', assigned_hostler, hostler_reposition_travel_time)
-        # record_vehicle_event('hostler', assigned_hostler, f'pickup_OC_{oc}', 'empty', hostler_reposition_travel_time, emissions, 'end', env.now)
-
-        # 5.2 The hostler drops off OC at the chassis
-        current_veh_num = 2 * state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items) - len(terminal.active_hostlers.items)
-        hostler_travel_time_to_chassis = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length,d_h_min, d_h_max)
-        current_veh_num = 2 * state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items) - len(terminal.active_hostlers.items)
-        hostler_travel_time_to_track = simulate_hostler_track_travel(assigned_hostler.to_string(), current_veh_num, total_lane_length, d_tr_min, d_tr_mean, d_tr_max)
-        yield env.timeout(hostler_travel_time_to_chassis + hostler_travel_time_to_track)
-        emissions = emission_calculation('empty', 'hostler', assigned_hostler, hostler_travel_time_to_chassis)
-        yield terminal.chassis.put(oc)
-        record_container_event(oc.to_string(), 'hostler_dropoff', env.now)
-        # record_vehicle_event('hostler', assigned_hostler, f'dropoff_{oc}', 'loaded', hostler_travel_time_to_chassis,emissions, 'end', env.now)
-
-    # 6. return hostler
-    return_hostler(terminal, assigned_hostler,
-                   travel_time_to_active=0,
-                   travel_time_to_parking=0.1
-                   )
-
-    # 7. Check OCs are all prepared for the train
-    outbound_count = sum((getattr(item, 'type', None) == 'Outbound') and (getattr(item, 'train_id', None) == train_schedule['train_id']) for item in terminal.chassis.items)
-    # print(f"Time {env.now:.3f}, container_process: For {train_schedule['train_id']}, {outbound_count} OCs are ready on chassis.")
-    print("Check OCs are all prepared for the train:", terminal.chassis.items)
-    if outbound_count == train_schedule['oc_number'] and (terminal.train_oc_prepared_events[train_schedule['train_id']].triggered == False):
-        terminal.train_oc_prepared_events[train_schedule['train_id']].succeed()
-        print(f"Time {env.now:.3f}: All OCs for {train_schedule['train_id']} are ready on chassis.")
-    else:
-        return
-
-    # # 8. IC < OC: ICs are all picked up and still have OCs remaining
-    # inbound_remaining = sum((item.type == 'Inbound') & (item.train_id == train_schedule['train_id']) for item in terminal.chassis.items)
-    # outbound_remaining = sum((item.type == 'Outbound') & (item.train_id == train_schedule['train_id']) for item in terminal.parking_slots.items)
-    # # TODO: do we need these checks? Or are they handled by put_hostler?
-    # if (inbound_remaining == 0) and (outbound_remaining == 0):
-    #     current_veh_num = state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items)
-    #     hostler_travel_time_to_parking = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length,
-    #                                                              d_h_min, d_h_max)
-    #     emissions = emission_calculation('empty', 'hostler', assigned_hostler, hostler_travel_time_to_parking)
-    #     yield env.timeout(hostler_travel_time_to_parking)
-    #     print(f"Time {env.now:.3f}: Hostler {assigned_hostler.to_string()} return to parking slot.")
-    #     yield terminal.parked_hostlers.put(assigned_hostler)
-    #     # record_vehicle_event('hostler', assigned_hostler, f'back_parking', 'empty', hostler_travel_time_to_parking,
-    #     #                      emissions,
-    #     #                      'end', env.now)
+    # # 5. Assign the hostler to pick up an OC (FIFO)
+    # # print("parking slots", terminal.parking_slots.items)
+    # if sum(item.type == 'Outbound' for item in terminal.parking_slots.items) > 0:
+    #     oc = yield terminal.parking_slots.get(lambda x: x.type == 'Outbound')
+    #
+    #     # 5.1 The hostler picks up an OC
+    #     hostler_reposition_travel_time = simulate_reposition_travel(assigned_hostler, current_veh_num, total_lane_length, d_h_min, d_h_max)
+    #     yield env.timeout(hostler_reposition_travel_time)
+    #
+    #     # print(f"hostler picked up {oc.to_string()}")
+    #     record_container_event(oc.to_string(), 'hostler_pickup', env.now)
+    #
+    #     # 5.2 The hostler drops off OC at the chassis
+    #     current_veh_num = 2 * state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items) - len(terminal.active_hostlers.items)
+    #     hostler_travel_time_to_chassis = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length,d_h_min, d_h_max)
+    #     current_veh_num = 2 * state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items) - len(terminal.active_hostlers.items)
+    #     hostler_travel_time_to_track = simulate_hostler_track_travel(assigned_hostler.to_string(), current_veh_num, total_lane_length, d_tr_min, d_tr_mean, d_tr_max)
+    #     yield env.timeout(hostler_travel_time_to_chassis + hostler_travel_time_to_track)
+    #     yield terminal.chassis.put(oc)
+    #     record_container_event(oc.to_string(), 'hostler_dropoff', env.now)
+    #
+    #     # 5.3 return hostler
+    #     return_hostler(terminal, assigned_hostler,
+    #                    travel_time_to_active=0,
+    #                    travel_time_to_parking=0.1
+    #                    )
+    #
+    # # 7. todo: Check OCs are all prepared for a train
+    # train_id = train_schedule['train_id']
+    # outbound_remaining = sum((item.type == 'Outbound' and item.train_id == train_id) for item in terminal.parking_slots.items)
+    # chassis_remaining = sum((item.type == 'Outbound' and item.train_id == train_id) for item in terminal.chassis.items)
+    #
+    # if (outbound_remaining != 0) and (chassis_remaining == train_schedule['oc_number']) and (terminal.train_oc_prepared_events[train_schedule['train_id']].triggered == False):
+    # # outbound_count = sum((getattr(item, 'type', None) == 'Outbound') and (getattr(item, 'train_id', None) == train_schedule['train_id']) for item in terminal.chassis.items)
+    # # if (outbound_count == train_schedule['oc_number']
+    #     terminal.train_oc_prepared_events[train_schedule['train_id']].succeed()
+    #     print(f"Time {env.now:.3f}: All OCs for {train_schedule['train_id']} are ready on chassis.")
     # else:
-    #     print(f"Time {env.now:.3f}: Hostler {assigned_hostler.to_string()} finished one loop for train {train_schedule['train_id']}.")
-    #     yield terminal.active_hostlers.put(assigned_hostler)
+    #     return
 
 
 def handle_remaining_oc(env, terminal, train_schedule):
     train_id = train_schedule['train_id']
 
     while True:
-        # 1) how many oc remaining?
+        # 1) how many oc remaining? & how many oc prepared?
         outbound_remaining = sum(
             (item.type == 'Outbound') and (item.train_id == train_id)
-            for item in terminal.parking_slots.items
-        )
+            for item in terminal.parking_slots.items)
 
-        if outbound_remaining == 0:
+        chassis_remaining = sum(
+            (item.type == 'Outbound') and (item.train_id == train_id)
+            for item in terminal.chassis.items)
+
+        if outbound_remaining == 0 and chassis_remaining == train_schedule['oc_number']:
             print(f"Time {env.now:.3f}: All OC handled for train {train_id}.")
             if not terminal.train_oc_prepared_events[train_id].triggered:
                 terminal.train_oc_prepared_events[train_id].succeed()
@@ -424,13 +336,13 @@ def handle_remaining_oc(env, terminal, train_schedule):
         oc = yield terminal.parking_slots.get(
             lambda x: (x.type == 'Outbound') and (x.train_id == train_id)
         )
+        record_container_event(oc.to_string(), 'hostler_pickup', env.now)
 
         # 3) assign hostler
         assigned_hostler = yield get_hostler(terminal)
         current_veh_num = 2 * state.HOSTLER_NUMBER - len(terminal.parked_hostlers.items) - len(terminal.active_hostlers.items)
         hostler_travel_time_to_parking = simulate_hostler_travel(
-            assigned_hostler.to_string(), current_veh_num, total_lane_length, d_h_min, d_h_max
-        )
+            assigned_hostler.to_string(), current_veh_num, total_lane_length, d_h_min, d_h_max)
         yield env.timeout(hostler_travel_time_to_parking)
         # print(f"ICs are prepared, but OCs remaining: {len([it for it in terminal.oc_store.items if it.train_id == train_id])}")
 
@@ -472,15 +384,14 @@ def crane_load_process(env, terminal, track_id, train_schedule):
 
     while sum(item.type == 'Outbound' and item.train_id == train_schedule['train_id'] for item in terminal.chassis.items) > 0:  # if there still has OC on chassis
         crane_item = yield terminal.cranes.get(lambda x: x.track_id == track_id)
+        # oc = yield terminal.chassis.get(lambda x: x.type == 'Outbound')
+        oc = yield terminal.chassis.get(
+            lambda x: x.type == 'Outbound' and x.train_id == train_schedule['train_id']
+        )
 
-        oc = yield terminal.chassis.get(lambda x: x.type == 'Outbound' and x.train_id == train_schedule['train_id'])
-        # print(f"Time {env.now:.3f}: Crane {crane_item.to_string()} starts loading {oc} onto the train.")
         crane_load_move_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
         yield env.timeout(crane_load_move_time)  # loading time, depends on container parameter**
         record_container_event(oc.to_string(), 'crane_load', env.now)
-        # record_vehicle_event('crane', (crane_item.id, crane_item.type), f'load_{oc}', 'full', crane_load_move_time,
-        #                      crane_load_move_time * state.FULL_EMISSIONS_RATES['Crane'][crane_item.type], 'end',
-        #                      env.now)
         print(f"Time {env.now:.3f}: Crane {crane_item.to_string()} finished loading {oc} onto the train.")
 
         yield terminal.train_oc_stores.put(oc)
@@ -488,7 +399,6 @@ def crane_load_process(env, terminal, track_id, train_schedule):
 
     terminal.train_end_load_events[train_schedule['train_id']].succeed()
     print(f"Time {env.now:.3f}: All OCs loaded. Train-{train_schedule['train_id']} is fully loaded and ready to depart.")
-    # print(f"Containers for Train-{train_schedule['train_id']} on chassis (after loading OCs): {terminal.chassis.items}")
 
 
 def handle_train_departure(env, terminal, train_schedule, train_id, track_id, arrival_time):
@@ -526,15 +436,15 @@ def train_process_per_track(env, terminal, track_id, train_schedule, train_id, a
     yield terminal.train_ic_picked_events[train_schedule['train_id']]
     print(f"[Event]: All {train_schedule['full_cars']} IC picked events are finished for train {train_schedule['train_id']}.")
 
-    # OCs remaining -> process rest OCs
-    env.process(handle_remaining_oc(env, terminal, train_schedule))
-
-    # condition 2: all OC prepared
+    # condition 2 & 3: no OCs on parking slots - OCs remaining -> process rest OCs; all OC prepared
+    if sum((item.type == 'Outbound') and (item.train_id == train_id) for item in terminal.parking_slots.items) != 0:
+        env.process(handle_remaining_oc(env, terminal, train_schedule))
     yield terminal.train_oc_prepared_events[train_schedule['train_id']]
-    print(f"[Event]: All {oc_needed} OCs are ready on chassis for train {train_schedule['train_id']}.")
+    print(f"[Event]: All {oc_needed} OCs are ready on chassis and no OCs remaining on parking slots for train {train_schedule['train_id']}.")
+    print("chassis:", terminal.chassis.items)
 
     # crane loading
-    # conditions satisfied: 1. all_ic_picked & 2. all_oc_prepared -> crane loading starts
+    # only when 1. all_ic_picked (chassis), 2. all_oc_picked (parking slots) & 3. all_oc_prepared (chassis) satisfied -> crane loading starts
     terminal.train_start_load_events[train_schedule['train_id']].succeed()
     env.process(crane_load_process(env, terminal, track_id=track_id, train_schedule=train_schedule))
     yield terminal.train_end_load_events[train_schedule['train_id']]
@@ -577,13 +487,6 @@ def process_train_arrival(env, terminal, train_schedule):
     terminal.IC_COUNT[train_id] = 1
     terminal.OC_COUNT[train_id] = 1
 
-    # Initialize train with loaded ICs
-    ic_num = terminal.IC_COUNT[train_schedule['train_id']]
-    for ic_id in range(ic_num, ic_num + train_schedule['full_cars']):
-        ic = container(type='Inbound', id=ic_id, train_id=train_schedule['train_id'])
-        terminal.train_ic_stores.put(ic)
-        record_container_event(ic.to_string(), 'train_arrival', env.now)    # todo: timetable arrival time; also need actual assigned time
-
     # All trucks arrive before train arrives
     env.process(truck_arrival(env, terminal, train_schedule))
 
@@ -610,6 +513,15 @@ def process_train_arrival(env, terminal, train_schedule):
     else:
         train_id = yield terminal.train_pool_stores.get()
         print(f"Time {env.now:.3f}: Train {train_id} has been assigned to track {track_id}.")
+
+        # Initialize train with loaded ICs
+        ic_num = terminal.IC_COUNT[train_schedule['train_id']]
+        for ic_id in range(ic_num, ic_num + train_schedule['full_cars']):
+            ic = container(type='Inbound', id=ic_id, train_id=train_schedule['train_id'])
+            terminal.train_ic_stores.put(ic)
+            record_container_event(ic.to_string(), 'train_arrival_expected', train_schedule['arrival_time'])
+            record_container_event(ic.to_string(), 'train_arrival_actual', env.now)
+
         # Initialize events for each train
         initialize_train_events(env, terminal, train_id)
         # Train processed separately on each track
@@ -631,8 +543,8 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
          "truck_number": 3},  # test: ic > oc
         {"train_id": 13, "arrival_time": 0, "departure_time": 10, "empty_cars": 0, "full_cars": 1, "oc_number": 3,
          "truck_number": 3},  # test: ic < oc
-        {"train_id": 44, "arrival_time": 0, "departure_time": 10, "empty_cars": 0, "full_cars": 4, "oc_number": 4,
-         "truck_number": 4},  # test: ic = oc
+        {"train_id": 22, "arrival_time": 0, "departure_time": 10, "empty_cars": 0, "full_cars": 2, "oc_number": 2,
+         "truck_number": 2},  # test: ic = oc
         ]
 
     truck_number = max([entry['truck_number'] for entry in train_timetable])
@@ -658,10 +570,10 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
         )
         .with_columns(
             pl.when(
-                pl.col("truck_exit").is_not_null() & pl.col("train_arrival").is_not_null()
+                pl.col("truck_exit").is_not_null() & pl.col("train_arrival_expected").is_not_null()
             )
             .then(
-                pl.col("truck_exit") - pl.col("train_arrival")
+                pl.col("truck_exit") - pl.col("train_arrival_expected")
             )
             .when(
                 pl.col("train_depart").is_not_null()

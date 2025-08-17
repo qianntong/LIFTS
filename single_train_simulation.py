@@ -1,5 +1,6 @@
 import simpy
 import random
+import time
 import json
 import polars as pl
 from parameters import *
@@ -624,12 +625,13 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
 
 
 if __name__ == "__main__":
+    start_time = time.time()
     single_run = run_simulation(
         train_consist_plan=pl.read_csv(utilities.package_root() / 'input' / 'train_consist_plan.csv'),
         terminal="Allouez",
         out_path=utilities.package_root() / 'output' / 'single_track_results'
     )
-
+    print("total simulation time", time.time() - start_time)
     print("Done!")
     # # Performance Matrix
     # output = {
