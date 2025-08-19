@@ -114,61 +114,25 @@ class LiftsState:
     IN_GATE_NUMBERS: int = 60  # test queuing module with 1; normal operations with 6
     OUT_GATE_NUMBERS: int = 60
 
-    # Fixed: Load Emission matrix
-    # Diesel unit: gallons/load
-    # Electric unit: kMhr/load
-    FULL_LOAD_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            'Truck': {'Diesel': 2.00, 'Electric': 14.2},
-            'Hostler': {'Diesel': 0.35, 'Electric': 4.76},
-            'Crane': {'Diesel': 0.26, 'Hybrid': 0.48},
-        }
-    )
 
-    IDLE_LOAD_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
+    # Fixed: Emission matrix (ZANZEFF reports, 2022)
+    ENERGY_CONSUMPTION: dict[str, dict[str, dict[str, float]]] = field(
         default_factory=lambda: {
-            'Truck': {'Diesel': 0.60, 'Electric': 12.42},
-            'Hostler': {'Diesel': 0.25, 'Electric': 1.28},
-            'Crane': {'Diesel': 0.26, 'Hybrid': 0.48},
-        }
-    )
+            "LOAD_CONSUMPTION": {
+                "Crane_Loaded": {"Diesel": 0.26, "Hybrid": 0.48},  # gallons/load, kWh/load
+                "Crane_Idle": {"Diesel": 0.02, "Hybrid": 0.04},
+            },
 
-    # Diesel unit: gallons/meters
-    # Electric unit: kMhr/meters
-    FULL_TRIP_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            'Truck': {'Diesel': 1.94, 'Electric': 3.66},
-            'Hostler': {'Diesel': 0.35, 'Electric': 4.76},
-        }
-    )
+            "TRIP_CONSUMPTION": {
+                "Hostler_Empty": {"Diesel": 1.11, "Electric": 2.78},  # gallons/hr, kWh/hr
+                "Hostler_Loaded": {"Diesel": 1.94, "Electric": 3.66},
+                "Truck_Empty": {"Diesel": 1.11, "Electric": 2.68},
+                "Truck_Loaded": {"Diesel": 1.94, "Electric": 3.66},
+            },
 
-    IDLE_TRIP_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            'Truck': {'Diesel': 0.60, 'Electric': 1.42},
-            'Hostler': {'Diesel': 0.25, 'Electric': 1.28},
-        }
-    )
-
-    SIDE_PICK_RATES: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            'Side': {'Diesel': 2.88, 'Electric': 0.21},
-        }
-    )
-
-    # todo: double-track rate alignments
-    IDLE_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            'Truck': {'Diesel': 5.2, 'Electric': 2.4},
-            'Hostler': {'Diesel': 6.2, 'Electric': 2.4},
-            'Crane': {'Diesel': 40.3, 'Hybrid': 30.5},
-        }
-    )
-
-    FULL_EMISSIONS_RATES: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            'Truck': {'Diesel': 20.7, 'Electric': 10.2},
-            'Hostler': {'Diesel': 15.7, 'Electric': 10.2},
-            'Crane': {'Diesel': 60.3, 'Hybrid': 50.5},
+            "SIDE_PICK_CONSUMPTION": {
+                "Side": {"Diesel": 2.88, "Electric": 0.21},  # per lift
+            },
         }
     )
 

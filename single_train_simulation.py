@@ -44,7 +44,6 @@ class Terminal:
                    [(i + num_diesel, "electric") for i in range(num_electric)]
         for hostler_id in hostlers:
             self.hostlers.put(hostler_id)
-        # print(f"hostler {hostlers}")
 
 
 def record_event(container_id, event_type, timestamp):
@@ -98,20 +97,31 @@ def save_vehicle_and_performance_metrics(state, ic_avg_delay, oc_avg_delay):
 def emission_calculation(status, move, vehicle, id, travel_time):
     global state
     vehicle = vehicle.capitalize()
-    vehicle_type = id[1]
-    vehicle_type = vehicle_type.capitalize()
-    if status == 'loaded' and move == 'load':
-        emission_unit = state.FULL_LOAD_EMISSIONS_RATES[vehicle][vehicle_type]
+    type = id[1].capitalize()
+
+    # load (unit in lift)
+    if move == 'load':
+        if status == 'loaded':
+            emission_unit = state.ENERGY_CONSUMPTION["LOAD_CONSUMPTION"][f"{vehicle}_Loaded"][type]
+        else:  # idle
+            emission_unit = state.ENERGY_CONSUMPTION["LOAD_CONSUMPTION"][f"{vehicle}_Idle"][type]
         emissions = emission_unit
-    elif status == 'empty' and move == 'load':
-        emission_unit = state.IDLE_LOAD_EMISSIONS_RATES[vehicle][vehicle_type]
+
+    # trip (unit in hr * travel_time）
+    elif move == 'trip':
+        if status == 'loaded':
+            emission_unit = state.ENERGY_CONSUMPTION["TRIP_CONSUMPTION"][f"{vehicle}_Loaded"][type]
+        else:  # empty
+            emission_unit = state.ENERGY_CONSUMPTION["TRIP_CONSUMPTION"][f"{vehicle}_Empty"][type]
+        emissions = emission_unit * travel_time
+
+    # side (unit in lift)
+    elif move == 'side':
+        emission_unit = state.ENERGY_CONSUMPTION["SIDE_PICK_CONSUMPTION"]["Side"][type]
         emissions = emission_unit
-    elif status == 'loaded' and move == 'trip':
-        emission_unit = state.FULL_TRIP_EMISSIONS_RATES[vehicle][vehicle_type]
-        emissions = emission_unit * travel_time
-    elif status == 'empty' and move == 'trip':
-        emission_unit = state.IDLE_TRIP_EMISSIONS_RATES[vehicle][vehicle_type]
-        emissions = emission_unit * travel_time
+
+    else:
+        raise ValueError(f"Unsupported move type-{move} for vehicle {vehicle}-{id}.")
 
     return emissions
 
@@ -120,36 +130,87 @@ def truck_entry(env, train_schedule, terminal, truck_id):
     global state
     with terminal.in_gates.request() as gate_request:
         yield gate_request
-        # print(f"Time {env.now}: Truck {truck_id} passed the in-gate and is entering the terminal")
 
         oc_id = yield terminal.oc_store.get()
         record_event(oc_id, 'truck_arrival', env.now)
-        # Calculate truck speed according to the current density
-        truck_travel_time = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
-        emissions = emission_calculation('loaded', 'trip', 'truck', truck_id, truck_travel_time)
-        record_vehicle_event('truck', truck_id, f'drop off {oc_id}', 'loaded', 'trip', truck_travel_time, emissions, 'start', env.now)
+        # truck drops off an OC to the parking slot
+        truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
+        emissions = emission_calculation('loaded', 'trip', 'Truck', truck_id, truck_travel_time)
+        record_vehicle_event(
+            vehicle_category = 'truck',
+            vehicle = truck_id,
+            container = oc_id,
+            state = 'loaded',
+            move = 'trip',
+            time = truck_travel_time,
+            distance = truck_dist,
+            speed = truck_avg_speed,
+            density = truck_avg_density,
+            emission = emissions,
+            type = truck_id[1].capitalize(),
+            timestamp = env.now
+        )
 
-        truck_unload_time = 1/60 + random.uniform(0, 1/600)
-        emissions = emission_calculation('loaded', 'load', 'truck', truck_id, truck_unload_time)
-        record_vehicle_event('truck', truck_id, f'drop off {oc_id}', 'loaded', 'load', truck_unload_time, emissions, 'end', env.now)
-        # print(f"Time {env.now}: Truck {truck_id} unloaded {oc_id} at parking slot.")
+        # side pick picks up an OC
+        side_pick_unload_time = 1/60 + random.uniform(0, 1/600)
+        emissions = emission_calculation('loaded', 'side', 'Side', truck_id, side_pick_unload_time)
+        record_vehicle_event(
+            vehicle_category='side',
+            vehicle='Side pick',
+            container=oc_id,
+            state='loaded',
+            move='load',
+            time=side_pick_unload_time,
+            distance='n/a',
+            speed='n/a',
+            density='n/a',
+            emission=emissions,
+            type='Diesel',
+            timestamp=env.now
+        )
 
         # Truck resource parking
         terminal.parking_slots.put(oc_id)
         record_event(oc_id, 'truck_dropoff', env.now)
-        emissions = emission_calculation('empty', 'trip', 'truck', truck_id, truck_travel_time)
-        record_vehicle_event('truck', truck_id, f'trip {oc_id}', 'empty', 'trip', truck_travel_time, emissions, 'end', env.now)
+        truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
+        emissions = emission_calculation('empty', 'trip', 'Truck', truck_id, truck_travel_time)
+        record_vehicle_event(
+            vehicle_category='truck',
+            vehicle=truck_id,
+            container=oc_id,
+            state='empty',
+            move='trip',
+            time=truck_travel_time,
+            distance=truck_dist,
+            speed=truck_avg_speed,
+            density=truck_avg_density,
+            emission=emissions,
+            type=truck_id[1].capitalize(),
+            timestamp=env.now
+        )
 
 
 def empty_truck(env, train_schedule, terminal, truck_id):
     global state
     with terminal.in_gates.request() as gate_request:
         yield gate_request
-        # Note the arrival of empty trucks will not be recorded due to excel output dimensions
-        truck_travel_time = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min,
-                                                  d_t_max)
-        emissions = emission_calculation('empty', 'trip','truck', truck_id, truck_travel_time)
-        record_vehicle_event('truck', truck_id, f'entry', 'empty', 'trip', truck_travel_time, emissions, 'end', env.now)
+        # Truck resource parking, no container-based recording for empty truck considering Excel format
+        truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
+        emissions = emission_calculation('empty', 'trip', 'Truck', truck_id, truck_travel_time)
+        record_vehicle_event(
+            vehicle_category='truck',
+            vehicle=truck_id,
+            container='n/a',
+            state='empty',
+            move='trip',
+            time=truck_travel_time,
+            distance=truck_dist,
+            speed=truck_avg_speed,
+            density=truck_avg_density,
+            emission=emissions,
+            type=truck_id[1].capitalize(),
+            timestamp=env.now
+        )
 
 
 def truck_arrival(env, terminal, train_schedule, all_trucks_arrived_event):
@@ -186,8 +247,21 @@ def crane_unload_process(env, terminal, train_schedule, all_oc_prepared, oc_need
         yield env.timeout(crane_unload_time)
 
         record_event(ic_id, 'crane_unload', env.now)
-        emissions = emission_calculation('loaded', 'load', 'crane', crane_id, crane_unload_time)
-        record_vehicle_event('crane', crane_id, f'unload_{ic_id}', 'unloaded', 'load', crane_unload_time, emissions, 'end', env.now)
+        emissions = emission_calculation('loaded', 'load', 'Crane', crane_id, crane_unload_time)
+        record_vehicle_event(
+            vehicle_category='crane',
+            vehicle=crane_id,
+            container=ic_id,
+            state='loaded',
+            move='load',
+            time=crane_unload_time,
+            distance='n/a',
+            speed='n/a',
+            density='n/a',
+            emission=emissions,
+            type=crane_id[1].capitalize(),
+            timestamp=env.now
+        )
 
         terminal.chassis.put(ic_id)
         terminal.cranes.put(crane_id)
@@ -214,59 +288,128 @@ def container_process(env, terminal, train_schedule, all_oc_prepared, oc_needed,
     '''
     hostler_id = yield terminal.hostlers.get()
 
-    # Hostler picks up IC (load locking) from chassis
+    # Side-pick picks up IC (load locking) from chassis
     ic_id = yield terminal.chassis.get(lambda x: isinstance(x, int))
-    hostler_load_time = 1/60 + random.uniform(0, 1/600)
-    record_event(ic_id, 'hostler_loaded', env.now)
-    emissions = emission_calculation('loaded', 'load','hostler', hostler_id, hostler_load_time)
-    record_vehicle_event('hostler', hostler_id, f'pick up IC-{ic_id}', 'loaded', 'load', hostler_load_time,
-                         emissions, 'start', env.now)
+    side_pick_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
+    emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
+    record_vehicle_event(
+        vehicle_category = 'side',
+        vehicle = 'Side pick',
+        container = ic_id,
+        state = 'loaded',
+        move = 'load',
+        time = side_pick_unload_time,
+        distance='n/a',
+        speed='n/a',
+        density='n/a',
+        emission = emissions,
+        type = 'Diesel',
+        timestamp = env.now
+    )
 
-    # Hostler taking IC to parking slots
+    # Hostler taking the IC to the parking slot
     current_veh_num = state.HOSTLER_NUMBER - len(terminal.hostlers.items)
-    hostler_travel_time_to_parking = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
+    hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
     yield env.timeout(hostler_travel_time_to_parking)
-    # print(f"Time {env.now}: Hostler {hostler_id} picked up IC {ic_id} and is heading to parking slot.")
     record_event(ic_id, 'hostler_pickup', env.now)
-    emissions = emission_calculation('empty', 'trip','hostler', hostler_id, hostler_travel_time_to_parking)
-    record_vehicle_event('hostler', hostler_id, f'pick up IC-{ic_id}', 'empty', 'trip', hostler_travel_time_to_parking,
-                         emissions, 'doing', env.now)
+    emissions = emission_calculation('loaded', 'trip', 'Hostler', hostler_id, hostler_travel_time_to_parking)
+    record_vehicle_event(
+        vehicle_category = 'hostler',
+        vehicle = hostler_id,
+        container = ic_id,
+        state = 'loaded',
+        move = 'trip',
+        time = hostler_travel_time_to_parking,
+        distance = hostler_dist,
+        speed = hostler_speed,
+        density = hostler_density,
+        emission = emissions,
+        type = hostler_id[1].capitalize(),
+        timestamp = env.now
+    )
 
-    # Hostler drops off IC to the closest parking lot
-    hostler_unload_time = 1/60 + random.uniform(0, 1/600)
+    # Side pick lifts the IC to the parking slot
+    side_pick_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
     record_event(ic_id, 'hostler_loaded', env.now)
-    emissions = emission_calculation('loaded', 'load','hostler', hostler_id, hostler_unload_time)
-    record_vehicle_event('hostler', hostler_id, f'drop off IC-{ic_id}', 'loaded', 'load', hostler_travel_time_to_parking,
-                         emissions, 'end', env.now)
+    emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
+    record_vehicle_event(
+        vehicle_category='side',
+        vehicle='Side pick',
+        container=ic_id,
+        state='loaded',
+        move='load',
+        time=side_pick_unload_time,
+        distance='n/a',
+        speed='n/a',
+        density='n/a',
+        emission=emissions,
+        type='Diesel',
+        timestamp=env.now
+    )
 
     # Prepare for crane loading: if chassis has no IC AND all_ic_picked (parking side) is not triggered => trigger all_ic_picked
     if sum(str(item).isdigit() for item in terminal.chassis.items) == 0 and all_ic_unload_event.triggered and not all_ic_picked.triggered:
         all_ic_picked.succeed()
-        # print(f"Time {env.now}: All ICs for train-{train_schedule['train_id']} are picked up by hostlers.")
 
     # Assign a truck to pick up IC
     truck_id = yield terminal.truck_store.get()
-    # print(f"Time {env.now}: Truck {truck_id} is assigned to IC {ic_id} for exit.")
 
     # Truck going to pick up IC
     record_event(ic_id, 'truck_pickup', env.now)
-    truck_travel_time = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
+    truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
     yield env.timeout(truck_travel_time)
-    emissions = emission_calculation('empty', 'trip', 'truck', truck_id, truck_travel_time)
-    record_vehicle_event('truck', truck_id, f'pickup_IC_{ic_id}', 'empty', 'trip', truck_travel_time, emissions, 'start', env.now)
+    emissions = emission_calculation('empty', 'trip', 'Truck', truck_id, truck_travel_time)
+    record_vehicle_event(
+        vehicle_category = 'truck',
+        vehicle = truck_id,
+        container = ic_id,
+        state = 'empty',
+        move = 'trip',
+        time=truck_travel_time,
+        distance=truck_dist,
+        speed=truck_avg_speed,
+        density=truck_avg_density,
+        emission = emissions,
+        type = truck_id[1].capitalize(),
+        timestamp = env.now
+    )
 
-    # Truck picks up IC
-    truck_load_time = 1/60 + random.uniform(0, 1/600)
-    emissions = emission_calculation('loaded', 'load', 'truck', truck_id, truck_load_time)
-    record_vehicle_event('truck', truck_id, f'pickup_IC_{ic_id}', 'loaded', 'load', truck_load_time, emissions, 'doing',
-                         env.now)
+    # Side-pick picks up IC to load the truck
+    side_pick_unload_time = 1/60 + random.uniform(0, 1/600)
+    emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
+    record_vehicle_event(
+        vehicle_category = 'side',
+        vehicle = 'Side pick',
+        container = ic_id,
+        state = 'loaded',
+        move = 'load',
+        time = side_pick_unload_time,
+        distance='n/a',
+        speed='n/a',
+        density='n/a',
+        emission = emissions,
+        type = 'Diesel',
+        timestamp=env.now
+    )
 
     # Truck going to leave the gate
-    truck_travel_time = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
+    truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length, d_t_min, d_t_max)
     yield env.timeout(truck_travel_time)
-    emissions = emission_calculation('loaded', 'trip', 'truck', truck_id, truck_travel_time)
-    record_vehicle_event('truck', truck_id, f'pickup_IC_{ic_id}', 'loaded', 'trip', truck_travel_time, emissions, 'end',
-                         env.now)
+    emissions = emission_calculation('loaded', 'trip', 'Truck', truck_id, truck_travel_time)
+    record_vehicle_event(
+        vehicle_category='truck',
+        vehicle=truck_id,
+        container=ic_id,
+        state='loaded',
+        move='trip',
+        time=truck_travel_time,
+        distance=truck_dist,
+        speed=truck_avg_speed,
+        density=truck_avg_density,
+        emission=emissions,
+        type=truck_id[1].capitalize(),
+        timestamp=env.now
+    )
 
     # Truck queue and exit the gate
     env.process(truck_exit(env, terminal, truck_id, ic_id))
@@ -274,95 +417,201 @@ def container_process(env, terminal, train_schedule, all_oc_prepared, oc_needed,
     # Assign a hostler to pick up an OC, if OC remains (balanced loop remains)
     if len(terminal.parking_slots.items) > 0:
         oc = yield terminal.parking_slots.get()
-        # print(f"Time {env.now}: Hostler {hostler_id} is going to pick up {oc}")
 
-        # The hostler going to pick up an OC after picking up an IC
-        hostler_reposition_travel_time = simulate_reposition_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
+        # The hostler going to pick up an OC after finishing the IC trip
+        hostler_reposition_travel_time, reposition_dist, hostler_speed, hostler_density = simulate_reposition_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
         yield env.timeout(hostler_reposition_travel_time)
-        # print(f"Time {env.now}: Hostler {hostler_id} picked up {oc} and is returning to the terminal")
         record_event(oc, 'hostler_pickup', env.now)
-        emissions = emission_calculation('empty', 'trip','hostler', hostler_id, hostler_reposition_travel_time)
-        record_vehicle_event('hostler', hostler_id, f'pick up {oc}', 'empty', 'trip', hostler_reposition_travel_time, emissions,
-                             'end', env.now)
+        emissions = emission_calculation('empty', 'trip', 'Hostler', hostler_id, hostler_reposition_travel_time)
+        record_vehicle_event(
+            vehicle_category='hostler',
+            vehicle=hostler_id,
+            container=oc,
+            state='empty',
+            move='trip',
+            time=hostler_reposition_travel_time,
+            distance=reposition_dist,
+            speed=hostler_speed,
+            density=hostler_density,
+            emission=emissions,
+            type=hostler_id[1].capitalize(),
+            timestamp=env.now
+        )
 
-        # Hostler picks up OC
-        hostler_load_time = 1 / 60 + random.uniform(0, 1 / 600)
+        # Side-pick picks up OC to load the hostler
+        # Hostler going to the chassis
         record_event(ic_id, 'hostler_loaded', env.now)
-        emissions = emission_calculation('loaded', 'load', 'hostler', hostler_id, hostler_load_time)
-        record_vehicle_event('hostler', hostler_id, f'picks up OC-{oc}', 'loaded', 'load',
-                             hostler_travel_time_to_parking, emissions, 'start', env.now)
+        hostler_load_time = 1 / 60 + random.uniform(0, 1 / 600)
+        emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, hostler_load_time)
+        record_vehicle_event(
+            vehicle_category='side',
+            vehicle='Side pick',
+            container=oc,
+            state='loaded',
+            move='load',
+            time=hostler_load_time,
+            distance='n/a',
+            speed='n/a',
+            density='n/a',
+            emission=emissions,
+            type='Diesel',
+            timestamp=env.now
+        )
 
         # Hostler going to drop off OC
         current_veh_num = state.HOSTLER_NUMBER - len(terminal.hostlers.items)
-        hostler_travel_time_to_parking = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
+        hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
         yield env.timeout(hostler_travel_time_to_parking)
-        # print(f"Time {env.now}: Hostler {hostler_id} dropped off {oc} onto chassis")
         yield terminal.chassis.put(oc)
         record_event(oc, 'hostler_dropoff', env.now)
+        emissions = emission_calculation('loaded', 'trip', 'Hostler', hostler_id, hostler_travel_time_to_parking)
+        record_vehicle_event(
+            vehicle_category='hostler',
+            vehicle=hostler_id,
+            container=oc,
+            state='loaded',
+            move='trip',
+            time=hostler_travel_time_to_parking,
+            distance=hostler_dist,
+            speed=hostler_speed,
+            density=hostler_density,
+            emission=emissions,
+            type=hostler_id[1].capitalize(),
+            timestamp=env.now
+        )
 
-        # Hostler drops off OC
-        hostler_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
-        record_event(ic_id, 'hostler_unloaded', env.now)
-        emissions = emission_calculation('loaded', 'load', 'hostler', hostler_id, hostler_unload_time)
-        record_vehicle_event('hostler', hostler_id, f'drops off OC-{oc}', 'loaded', 'load', hostler_travel_time_to_parking, emissions, 'end', env.now)
+        # Side-pick drops off OC to chassis from hostler
+        side_pick_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
+        record_event(oc, 'hostler_unloaded', env.now)
+        emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
+        record_vehicle_event(
+            vehicle_category='side',
+            vehicle='Side pick',
+            container=oc,
+            state='loaded',
+            move='load',
+            time=side_pick_unload_time,
+            distance='n/a',
+            speed='n/a',
+            density='n/a',
+            emission=emissions,
+            type=hostler_id[1].capitalize(),
+            timestamp=env.now
+        )
 
     # Hostler going back to resource parking
     current_veh_num = state.HOSTLER_NUMBER - len(terminal.hostlers.items)
-    hostler_travel_time_to_parking = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
-    emissions = emission_calculation('empty', 'trip','hostler', hostler_id, hostler_travel_time_to_parking)
-    yield env.timeout(hostler_travel_time_to_parking)  # update: time calculated by speed-density function
-    # print(f"Time {env.now}: Hostler {hostler_id} return to parking slot.")
+    hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
+    yield env.timeout(hostler_travel_time_to_parking)
+    emissions = emission_calculation('empty', 'trip', 'Hostler', hostler_id, hostler_travel_time_to_parking)
+    record_vehicle_event(
+        vehicle_category = 'hostler',
+        vehicle = hostler_id,
+        container = oc,
+        state = 'empty',
+        move = 'trip',
+        time=hostler_travel_time_to_parking,
+        distance=hostler_dist,
+        speed=hostler_speed,
+        density=hostler_density,
+        emission = emissions,
+        type = hostler_id[1].capitalize(),
+        timestamp = env.now
+    )
     yield terminal.hostlers.put(hostler_id)
-    record_vehicle_event('hostler', hostler_id, f'back_parking', 'empty', 'trip', hostler_travel_time_to_parking, emissions,'end', env.now)
 
     # IC < OC: ICs are all picked up and still have OCs remaining
-    # if sum(str(item).isdigit() for item in terminal.chassis.items) == 0 and len(terminal.parking_slots.items) != 0:
     if sum(str(item).isdigit() for item in terminal.chassis.items) == 0 and len(terminal.parking_slots.items) == \
             train_schedule['oc_number'] - train_schedule['full_cars']:
-        # print(f"ICs are prepared, but OCs remaining: {terminal.parking_slots.items}")
         remaining_oc = len(terminal.parking_slots.items)
-        # Repeat hostler picking-up OC process only, until all remaining OCs are transported
         for i in range(1, remaining_oc + 1):
             oc = yield terminal.parking_slots.get()
-            # print(f"The OC is {oc}")
 
             # Hostler going to pick up OC from parking slots
             current_veh_num = state.HOSTLER_NUMBER - len(terminal.hostlers.items)
-            hostler_travel_time_to_parking = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length,
-                                                                     d_h_min, d_h_max)
+            hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
             yield env.timeout(hostler_travel_time_to_parking)
             yield terminal.chassis.put(oc)
             record_event(oc, 'hostler_dropoff', env.now)
-            record_vehicle_event('hostler', hostler_id, f'pick up OC-{oc}', 'empty', 'travel', hostler_travel_time_to_parking, emissions, 'end', env.now)
+            emissions = emission_calculation('loaded', 'trip', 'Hostler', hostler_id, hostler_travel_time_to_parking)
+            record_vehicle_event(
+                vehicle_category='hostler',
+                vehicle=hostler_id,
+                container=oc,
+                state='loaded',
+                move='trip',
+                time=hostler_travel_time_to_parking,
+                distance=hostler_dist,
+                speed=hostler_speed,
+                density=hostler_density,
+                emission=emissions,
+                type=hostler_id[1].capitalize(),
+                timestamp=env.now
+            )
 
-            # Hostler picks up OC
-            hostler_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
+            # Side-pick picks up an OC
+            side_pick_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
             record_event(ic_id, 'hostler_unloaded', env.now)
-            emissions = emission_calculation('loaded', 'load', 'hostler', hostler_id, hostler_unload_time)
-            record_vehicle_event('hostler', hostler_id, f'drops off OC-{oc}', 'loaded', 'load',
-                                 hostler_travel_time_to_parking, emissions, 'end', env.now)
-            # print(f"Time {env.now}: Hostler {hostler_id} picked up off {oc} from chassis")
+            emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
+            record_vehicle_event(
+                vehicle_category='side',
+                vehicle='Side pick',
+                container=oc,
+                state='loaded',
+                move='load',
+                time=side_pick_unload_time,
+                distance='n/a',
+                speed='n/a',
+                density='n/a',
+                emission=emissions,
+                type=hostler_id[1].capitalize(),
+                timestamp=env.now
+            )
 
             # Hostler going to drop off OC
             current_veh_num = state.HOSTLER_NUMBER - len(terminal.hostlers.items)
-            hostler_travel_time_to_parking = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length,
-                                                                     d_h_min, d_h_max)
+            hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max)
             yield env.timeout(hostler_travel_time_to_parking)
-            # print(f"Time {env.now}: Hostler {hostler_id} dropped off {oc} onto chassis")
             yield terminal.chassis.put(oc)
             record_event(oc, 'hostler_dropoff', env.now)
+            emissions = emission_calculation('loaded', 'trip', 'Hostler', hostler_id, hostler_travel_time_to_parking)
+            record_vehicle_event(
+                vehicle_category='hostler',
+                vehicle=hostler_id,
+                container=oc,
+                state='loaded',
+                move='trip',
+                time=hostler_travel_time_to_parking,
+                distance=hostler_dist,
+                speed=hostler_speed,
+                density=hostler_density,
+                emission=emissions,
+                type=hostler_id[1].capitalize(),
+                timestamp=env.now
+            )
 
             # Hostler drops off OC to chassis
-            hostler_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
-            record_event(ic_id, 'hostler_unloaded', env.now)
-            emissions = emission_calculation('loaded', 'load', 'hostler', hostler_id, hostler_unload_time)
-            record_vehicle_event('hostler', hostler_id, f'drops off OC-{oc}', 'loaded', 'load',
-                                 hostler_travel_time_to_parking, emissions, 'end', env.now)
+            side_pick_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
+            record_event(oc, 'hostler_unloaded', env.now)
+            emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
+            record_vehicle_event(
+                vehicle_category='side',
+                vehicle='Side pick',
+                container=ic_id,
+                state='loaded',
+                move='load',
+                time=side_pick_unload_time,
+                distance='n/a',
+                speed='n/a',
+                density='n/a',
+                emission=emissions,
+                type=hostler_id[1].capitalize(),
+                timestamp=env.now
+            )
             yield terminal.chassis.put(oc)
 
             if sum(1 for item in terminal.chassis.items if isinstance(item, str) and "OC-" in str(item)) == oc_needed:
                 all_oc_prepared.succeed()
-                # print(f"Time {env.now}: All OCs are ready on chassis.")
             i += 1
 
     # if sum(1 for item in terminal.chassis.items if isinstance(item, str) and "OC-" in str(item)) == oc_needed:
@@ -376,7 +625,6 @@ def truck_exit(env, terminal, truck_id, ic_id):
     global state
     with terminal.out_gates.request() as out_gate_request:
         yield out_gate_request
-        # print(f"Time {env.now}: Truck {truck_id} with IC {ic_id} is passing through the out-gate and leaving the terminal")
         truck_pass_time = state.TRUCK_OUTGATE_TIME + random.uniform(0, state.TRUCK_OUTGATE_TIME_DEV)
         yield env.timeout(truck_pass_time)
         record_event(ic_id, 'truck_exit', env.now)
@@ -401,8 +649,21 @@ def crane_load_process(env, terminal, start_load_event, end_load_event):
             yield env.timeout(crane_load_time)
 
             record_event(oc, 'crane_load', env.now)
-            emissions = emission_calculation('loaded', 'load', 'crane', crane_id, crane_load_time)
-            record_vehicle_event('crane', crane_id, f'load_{oc}', 'loaded', 'load', crane_load_time, emissions, 'end', env.now)
+            emissions = emission_calculation('loaded', 'load', 'Crane', crane_id, crane_load_time)
+            record_vehicle_event(
+                vehicle_category='crane',
+                vehicle=crane_id,
+                container=oc,
+                state='loaded',
+                move='load',
+                time=crane_load_time,
+                distance='n/a',
+                speed='n/a',
+                density='n/a',
+                emission=emissions,
+                type=crane_id[1].capitalize(),
+                timestamp=env.now
+            )
 
             # release crane
             terminal.cranes.put(crane_id)
@@ -438,27 +699,22 @@ def process_train_arrival(env, terminal, train_departed_event, train_schedule, n
     for oc in range(state.OC_NUM, state.OC_NUM + train_schedule['oc_number']):
         terminal.oc_store.put(f"OC-{oc_id}")
         oc_id += 1
-    # print("oc has:", terminal.oc_store.items)
 
     # All trucks arrive before train arrives
     env.process(truck_arrival(env, terminal, train_schedule, all_trucks_arrived_event))
 
     # Track assignment for a train
-    # print("Current available track has ", terminal.tracks.items)
     track_id = yield terminal.tracks.get()
     if track_id is None:
-        # print(f"Time {env.now}: Train {train_id} is waiting for an available track.")
         terminal.waiting_trains.append(train_id)
         return
 
     # Wait train arriving
     if env.now <= arrival_time:
         yield env.timeout(arrival_time - env.now)
-        # print(f"Time {env.now}: [In Time] Train {train_schedule['train_id']} has arrived, waiting to be assigned to the track {track_id}.")
         delay_time = 0
     else:
         delay_time = env.now - arrival_time
-        # print(f"Time {env.now}: [DELAYED] Train {train_schedule['train_id']} has been delayed for {delay_time} hours, waiting to be assigned to the track {track_id}.")
     state.train_delay_time[train_schedule['train_id']] = delay_time
 
     for ic_id in range(state.IC_NUM, state.IC_NUM + train_schedule['full_cars']):
@@ -481,7 +737,6 @@ def process_train_arrival(env, terminal, train_departed_event, train_schedule, n
     handle_train_departure(env, train_schedule, train_id, track_id)
 
     yield terminal.tracks.put(track_id)
-    # print(f"Time {env.now}: Train {train_id} is departing the terminal.")
 
     for oc_id in range(state.OC_NUM, state.OC_NUM + train_schedule['oc_number']):
         record_event(f"OC-{oc_id}", 'train_depart_expected', train_schedule['departure_time'])
@@ -575,7 +830,6 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     container_data["container_processing_time"] = container_data.apply(compute_processing_time, axis=1)
 
     # ==== 4. Add first_oc_pickup_time for OC containers ====
-
     container_data = container_data[container_data["container_id"].notna()].copy()
     container_data["container_id"] = container_data["container_id"].astype(str)
 

@@ -1,1 +1,1 @@
-{"layout": {"K": 40, "k": 20, "M": 2, "N": 2, "n_t": 2, "n_p": 2, "n_r": 6}, "vehicles": {"simulation_duration": 480, "CRANE_NUMBER": 1, "HOSTLER_NUMBER": 24}}
+{"layout": {"K": 400, "k": 200, "M": 2, "N": 3, "n_t": 2, "n_p": 2, "n_r": 34}, "vehicles": {"simulation_duration": 480, "CRANE_NUMBER": 1, "HOSTLER_NUMBER": 8}}

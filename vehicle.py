@@ -14,36 +14,45 @@ out_path.mkdir(parents=True, exist_ok=True)
 vehicle_events = {
     'crane': [],
     'hostler': [],
-    'truck': []
+    'truck': [],
+    'side': []
 }
 
 
-def record_vehicle_event(vehicle_category, vehicle, action, state, move, time, emission, event_type, timestamp):
+def record_vehicle_event(vehicle_category, vehicle, container, state, move, time, distance, speed, density, emission, type, timestamp):
     vehicle_events[vehicle_category].append({
         'vehicle_id': str(vehicle),
-        'action': action,
-        'state': state, # loaded or empty
+        'container_id':str(container),
+        'state': state, # loaded or empty(idle)
         'move': move, # load or trip
         'time': time,
+        'distance': distance,
+        'speed': speed,
+        'density': density,
         'emission': emission,
-        'event_type': event_type,
+        'type': type,  # 'D'->Diesel, 'E'->Electric, 'H'->Hybrid
         'timestamp': timestamp
     })
 
 
 def calculate_performance(dataframes, ic_count, oc_count):
-    summary = {vehicle: {'IC Emissions': 0, 'OC Emissions': 0, 'Total Emissions': 0} for vehicle in dataframes.keys()}
+    summary = {vehicle: {'IC Emissions': 0, 'OC Emissions': 0, 'Total Emissions': 0}
+               for vehicle in dataframes.keys()}
 
     for vehicle, df in dataframes.items():
         for _, row in df.iterrows():
             emission = row['emission']
-            action = row['action']
+            container_id = str(row['container_id'])
 
-            if 'OC' in action:
+            # IC / OC
+            if container_id.startswith("OC"):
                 summary[vehicle]['OC Emissions'] += emission
             else:
                 summary[vehicle]['IC Emissions'] += emission
-            summary[vehicle]['Total Emissions'] = summary[vehicle]['IC Emissions'] + summary[vehicle]['OC Emissions']
+
+        summary[vehicle]['Total Emissions'] = (
+            summary[vehicle]['IC Emissions'] + summary[vehicle]['OC Emissions']
+        )
 
     summary_df = pd.DataFrame.from_dict(summary, orient='index')
     summary_df.reset_index(inplace=True)
@@ -53,14 +62,12 @@ def calculate_performance(dataframes, ic_count, oc_count):
     total_row['Vehicle'] = 'Total'
     summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
 
-    # Append the average row directly below total row
     average_row = {
         'Vehicle': 'Average',
         'IC Emissions': total_row['IC Emissions'] / ic_count if ic_count else 0,
         'OC Emissions': total_row['OC Emissions'] / oc_count if oc_count else 0,
         'Total Emissions': total_row['Total Emissions'] / (ic_count + oc_count) if (ic_count + oc_count) else 0,
     }
-
     summary_df = pd.concat([summary_df, pd.DataFrame([average_row])], ignore_index=True)
     return summary_df
 
@@ -73,14 +80,14 @@ def save_energy_to_excel(state):
     ic_count = state.IC_NUM
     oc_count = state.OC_NUM
 
-    # Calculate summary statistics
+    # return summary statistics
     performance_df = calculate_performance(df_logs, ic_count, oc_count)
     performance_df.rename(columns={'IC Emissions': 'IC Energy Consumption',
                                'OC Emissions': 'OC Energy Consumption',
                                'Total Emissions': 'Total Energy Consumption'}, inplace=True)
 
     file_name = f"{state.CRANE_NUMBER}C-{state.HOSTLER_NUMBER}H_vehicle_throughput_{K}_batch_size_{k}.xlsx"
-    file_path = out_path / 'double_track_results'/ file_name
+    file_path = out_path / 'single_track_results' / file_name
 
     with pd.ExcelWriter(file_path) as writer:
         for vehicle_type, df in df_logs.items():

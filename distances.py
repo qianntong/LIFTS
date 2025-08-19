@@ -79,9 +79,9 @@ def simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length,
     current_veh_num = train_schedule["truck_number"] - len(terminal.truck_store.items)
     veh_density = current_veh_num / total_lane_length
     truck_speed = speed_density(veh_density, 'truck')
-    truck_travel_time = (d_t_dist) / (2 * truck_speed * 3600)  # (ft -> m) / (m/hr)
+    truck_travel_time = (d_t_dist) / (2 * truck_speed * 3600)  # (m/s)
 
-    return truck_travel_time
+    return truck_travel_time, d_t_dist, truck_speed, veh_density
 
 
 def simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max):
@@ -92,7 +92,7 @@ def simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_
     hostler_speed = speed_density(veh_density, 'hostler')
     hostler_travel_time = 3.28 * (d_h_dist) / (hostler_speed * 3600)     # (ft -> m) / (s -> hr)
 
-    return hostler_travel_time
+    return hostler_travel_time, d_h_dist, hostler_speed, veh_density
 
 
 def simulate_reposition_travel(hostler_id, current_veh_num, total_lane_length, d_r_min, d_r_max):
@@ -102,34 +102,20 @@ def simulate_reposition_travel(hostler_id, current_veh_num, total_lane_length, d
 
     # Calculate vehicle density
     veh_density = current_veh_num / total_lane_length
-
-    # Compute reposition speed based on density
     hostler_speed = speed_density(veh_density, 'hostler')
-    # print(f"Current hostler {hostler_id} speed is {hostler_speed} (m/s)")
-
-    # Compute hostler travel time in hours and convert to seconds
     hostler_reposition_travel_time = (d_r_dist) / (hostler_speed * 3600)      # (ft -> m) / (m/hr)
-    # print(f"hostler {hostler_id} travel time {hostler_reposition_travel_time} (hr)")
 
-    return hostler_reposition_travel_time
+    return hostler_reposition_travel_time, d_r_dist, hostler_speed, veh_density
 
 def simulate_hostler_track_travel(hostler_id, current_veh_num, total_lane_length, d_tr_min, d_tr_mean, d_tr_max):
-    # for double/multiple-track simulation
+    # only for double/multiple-track simulation
     global state
 
     c = (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)  # standardization
     d_tr_dist = triang(c, loc=d_tr_min, scale=d_tr_max - d_tr_min).rvs()
-
-    # Calculate vehicle density
     veh_density = current_veh_num / total_lane_length
-
-    # Compute hostler speed based on density
     hostler_speed = speed_density(veh_density, 'hostler')
-    # print(f"Current hostler {hostler_id} speed is {hostler_speed} (m/s)")
-
-    # Compute hostler travel time in hours and convert to seconds
     hostler_travel_time = (d_tr_dist/3.2) / (2 * hostler_speed * 3600)     # (ft -> m) / (m/hr)
-    # print(f"hostler {hostler_id} travel time {hostler_travel_time} (hr)")
 
     return hostler_travel_time
 

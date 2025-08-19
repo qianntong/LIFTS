@@ -12,10 +12,10 @@ simulation_days = 20                            # total simulation time = warm-u
 total_simulation_length = 24 * simulation_days  # total simulation time (hours)
 replicate_times = 3                             # observation window (days)
 simulation_duration = replicate_times * 24      # observation window (hours)
-train_batch_sizes = list(range(20, 21, 10))     # train batch size: an integer list within (20, 200)
+train_batch_sizes = list(range(20, 201, 10))     # train batch size: an integer list within (20, 200)
 num_trains_per_day = list(range(1, 2, 1))       # number of trains per day: an integer list within (1, 20)
 num_cranes_list = list(range(1, 2, 1))          # number of cranes in the terminal: an integer within (1, 5)
-num_hostlers_list = list(range(1, 2, 1)) + [24] # numbers of hostlers in the terminal: an integer within (1, 20)
+num_hostlers_list = list(range(8, 9, 1))        # numbers of hostlers in the terminal: an integer within (1, 20)
 
 
 # don't change root/parameters below
