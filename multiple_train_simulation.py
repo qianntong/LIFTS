@@ -205,12 +205,13 @@ def get_hostler(terminal):
     return assigned_hostler
 
 
-def return_hostler(terminal, assigned_hostler, travel_time_to_active, travel_time_to_parking):
-    active_hostlers_needed = len(terminal.active_hostlers.get_queue) > 0
+def return_hostler(terminal, assigned_hostler, travel_time_to_active, travel_time_to_parking, active_hostlers_needed = None):
+    if active_hostlers_needed is None:
+        active_hostlers_needed = len(terminal.active_hostlers.get_queue) > 0
     if active_hostlers_needed:
-        yield terminal.active_hostlers.put()
+        yield terminal.active_hostlers.put(assigned_hostler)
     else:
-        yield terminal.parked_hostler.put()
+        yield terminal.parked_hostler.put(assigned_hostler)
 
 
 def container_process(env, terminal, train_schedule):
@@ -244,6 +245,10 @@ def container_process(env, terminal, train_schedule):
     # 3. Hostler drop off IC to parking slot
     yield env.timeout(0.1)  # side-pick
     record_container_event(ic.to_string(), 'hostler_dropoff', env.now)
+    return_hostler(terminal, assigned_hostler,
+                   travel_time_to_active=0,
+                   travel_time_to_parking=0,
+                   active_hostlers_needed=True)
 
     # 4. Assign a truck to pick up IC
     assigned_truck = yield terminal.truck_store.get()
