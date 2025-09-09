@@ -198,9 +198,9 @@ def get_hostler(terminal):
     parked_available = len(terminal.parked_hostlers.items) > 0
     active_available = len(terminal.active_hostlers.items) > 0
     if (active_available is False) and parked_available:
-        assigned_hostler = terminal.parked_hostlers.get()
+        assigned_hostler = yield terminal.parked_hostlers.get()
     else:
-        assigned_hostler = terminal.active_hostlers.get()
+        assigned_hostler = yield terminal.active_hostlers.get()
 
     return assigned_hostler
 
@@ -227,7 +227,7 @@ def container_process(env, terminal, train_schedule):
 
     # 1. An IC is waiting to be picked up by a hostler
     ic = yield terminal.chassis.get(lambda x: x.type == 'Inbound')
-    assigned_hostler = yield get_hostler(terminal)
+    assigned_hostler = get_hostler(terminal)
 
     # 2. hostler travel time 1: the empty hostler pick up the IC
     hostler_travel_time_to_track = 0.1
@@ -277,7 +277,7 @@ def handle_remaining_oc(env, terminal, train_schedule):
         print(f"hostler is picking up an OC {oc}.")
 
         # 3) assign hostler
-        assigned_hostler = yield get_hostler(terminal)
+        assigned_hostler = get_hostler(terminal)
         hostler_travel_time_to_parking = 0.1
         yield env.timeout(hostler_travel_time_to_parking)
 
