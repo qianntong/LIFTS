@@ -211,7 +211,7 @@ def return_hostler(terminal, assigned_hostler, travel_time_to_active, travel_tim
     if active_hostlers_needed:
         yield terminal.active_hostlers.put(assigned_hostler)
     else:
-        yield terminal.parked_hostler.put(assigned_hostler)
+        yield terminal.parked_hostlers.put(assigned_hostler)
 
 
 def container_process(env, terminal, train_schedule):
@@ -240,12 +240,12 @@ def container_process(env, terminal, train_schedule):
     record_container_event(ic.to_string(), 'hostler_pickup', env.now)
 
     check_ic_picked_complete(env, terminal, train_schedule)
-    yield terminal.train_ic_unload_events[train_schedule['train_id']]
+    # yield terminal.train_ic_unload_events[train_schedule['train_id']]
 
     # 3. Hostler drop off IC to parking slot
     yield env.timeout(0.1)  # side-pick
     record_container_event(ic.to_string(), 'hostler_dropoff', env.now)
-    return_hostler(terminal, assigned_hostler,
+    yield from return_hostler(terminal, assigned_hostler,
                    travel_time_to_active=0,
                    travel_time_to_parking=0,
                    active_hostlers_needed=True)
@@ -289,7 +289,7 @@ def handle_remaining_oc(env, terminal, train_schedule):
         record_container_event(oc.to_string(), 'hostler_dropoff', env.now)
 
         # 5) hostler travel back
-        return_hostler(terminal, assigned_hostler,
+        yield from return_hostler(terminal, assigned_hostler,
             travel_time_to_active=0,
             travel_time_to_parking=hostler_travel_time_to_parking)
 
