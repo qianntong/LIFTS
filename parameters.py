@@ -119,8 +119,8 @@ class LiftsState:
     ENERGY_CONSUMPTION: dict[str, dict[str, dict[str, float]]] = field(
         default_factory=lambda: {
             "LOAD_CONSUMPTION": {
-                "Crane_Loaded": {"Diesel": 0.26, "Hybrid": 0.48},  # gallons/load, kWh/load
-                "Crane_Idle": {"Diesel": 0.02, "Hybrid": 0.04},
+                "Crane_Loaded": {"Diesel": 0.26, "Hybrid": 0.48},  # H idling: kWh/load
+                "Crane_Idle": {"Diesel": 0.02, "Hybrid": 0.024},
             },
 
             "TRIP_CONSUMPTION": {

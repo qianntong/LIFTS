@@ -53,14 +53,16 @@ B = N * 80 + (N+1) * n_p * P # the horizontal length of the yard
 total_lane_length = A * (N + 1) + B * (M + 1)  # total distances of lanes
 
 
-def speed_density(count, vehicle_type):
+def speed_density(avg_density, vehicle_type):
     '''
     Unit of speed: ft/s
+    veh density = count / total_lane_length
     '''
     if vehicle_type == 'hostler':
-        speed = (1.7 + 0.1 * n_r + 0.003 * k) * math.e ** ((-1.5 * N - 0.5) * (count / total_lane_length))
+        # speed = (1.7 + 0.1 * n_r + 0.003 * k) * math.e ** ((-1.5 * N - 0.5) * avg_density)
+        speed = 8 * math.e ** ((-1.5 * N - 0.5) * avg_density)
     elif vehicle_type == 'truck':
-        speed = 10 * math.e ** ((-3.5 * N - 0.5) * (count / total_lane_length))
+        speed = 10 * math.e ** ((-3.5 * N - 0.5) * avg_density)
     else:
         raise ValueError("Invalid vehicle type. Choose 'hostler' or 'truck'.")
     return speed
@@ -75,7 +77,7 @@ def simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length,
     - d_t_min, d_t_max: Range for travel distance (ft)
     """
 
-    d_t_dist = uniform(loc=d_t_min, scale=(d_t_max - d_t_min)).rvs()
+    d_t_dist = 3.28 * uniform(loc=d_t_min, scale=(d_t_max - d_t_min)).rvs()
     current_veh_num = train_schedule["truck_number"] - len(terminal.truck_store.items)
     veh_density = current_veh_num / total_lane_length
     truck_speed = speed_density(veh_density, 'truck')
@@ -87,10 +89,10 @@ def simulate_truck_travel(truck_id, train_schedule, terminal, total_lane_length,
 def simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_min, d_h_max):
     global state
 
-    d_h_dist = uniform(loc=d_h_min, scale=(d_h_max - d_h_min)).rvs()
+    d_h_dist = 3.28 * uniform(loc=d_h_min, scale=(d_h_max - d_h_min)).rvs()
     veh_density = current_veh_num / total_lane_length
     hostler_speed = speed_density(veh_density, 'hostler')
-    hostler_travel_time = 3.28 * (d_h_dist) / (hostler_speed * 3600)     # (ft -> m) / (s -> hr)
+    hostler_travel_time = (d_h_dist) / (hostler_speed * 3600)
 
     return hostler_travel_time, d_h_dist, hostler_speed, veh_density
 
@@ -98,37 +100,29 @@ def simulate_hostler_travel(hostler_id, current_veh_num, total_lane_length, d_h_
 def simulate_reposition_travel(hostler_id, current_veh_num, total_lane_length, d_r_min, d_r_max):
     global state
     # Generate reposition travel distance from uniform distribution
-    d_r_dist = uniform(loc=d_r_min, scale=(d_r_max - d_r_min)).rvs()
+    d_r_dist = 3.28 * uniform(loc=d_r_min, scale=(d_r_max - d_r_min)).rvs()
 
     # Calculate vehicle density
     veh_density = current_veh_num / total_lane_length
     hostler_speed = speed_density(veh_density, 'hostler')
-    hostler_reposition_travel_time = (d_r_dist) / (hostler_speed * 3600)      # (ft -> m) / (m/hr)
+    hostler_reposition_travel_time = (d_r_dist) / (hostler_speed * 3600)
 
     return hostler_reposition_travel_time, d_r_dist, hostler_speed, veh_density
 
+
 def simulate_hostler_track_travel(hostler_id, current_veh_num, total_lane_length, d_tr_min, d_tr_mean, d_tr_max):
-    # only for double/multiple-track simulation
+    '''
+    only for double/multiple-track simulation
+    '''
     global state
 
-    c = (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)  # standardization
+    c = 3.28 * (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)  # standardization
     d_tr_dist = triang(c, loc=d_tr_min, scale=d_tr_max - d_tr_min).rvs()
     veh_density = current_veh_num / total_lane_length
     hostler_speed = speed_density(veh_density, 'hostler')
-    hostler_travel_time = (d_tr_dist/3.2) / (2 * hostler_speed * 3600)     # (ft -> m) / (m/hr)
+    hostler_travel_time = (d_tr_dist) / (2 * hostler_speed * 3600)
 
     return hostler_travel_time
-
-
-def triang_distribution(min_val, avg_val, max_val):
-    c = (avg_val - min_val) / (max_val - min_val)
-    return triang(c, loc=min_val, scale=(max_val - min_val))
-
-def uniform_distribution(min_val, max_val):
-    return uniform(loc=min_val, scale=(max_val - min_val))
-
-def uniform_mean(min_val, max_val):
-    return (max_val + min_val) / 2
 
 def ugly_sigma(x):
     total_sum = 0

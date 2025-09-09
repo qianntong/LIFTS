@@ -287,9 +287,28 @@ def container_process(env, terminal, train_schedule, all_oc_prepared, oc_needed,
     4. Once all OCs are prepared (all_oc_prepared), the crane starts loading (other function).
     '''
     hostler_id = yield terminal.hostlers.get()
-
-    # Side-pick picks up IC (load locking) from chassis
     ic_id = yield terminal.chassis.get(lambda x: isinstance(x, int))
+
+    # empty hostler going to pick up IC
+    current_veh_num = state.HOSTLER_NUMBER - len(terminal.hostlers.items)
+    hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(hostler_id,current_veh_num,total_lane_length,d_h_min,d_h_max)
+    emissions = emission_calculation('empty', 'trip', 'Hostler', hostler_id, hostler_travel_time_to_parking)
+    record_vehicle_event(
+        vehicle_category = 'hostler',
+        vehicle = hostler_id,
+        container = ic_id,
+        state = 'empty',
+        move = 'trip',
+        time = hostler_travel_time_to_parking,
+        distance = hostler_dist,
+        speed = hostler_speed,
+        density = hostler_density,
+        emission = emissions,
+        type = hostler_id[1].capitalize(),
+        timestamp = env.now
+    )
+
+    # side-pick
     side_pick_unload_time = 1 / 60 + random.uniform(0, 1 / 600)
     emissions = emission_calculation('loaded', 'side', 'Side', hostler_id, side_pick_unload_time)
     record_vehicle_event(
