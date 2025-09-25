@@ -150,11 +150,11 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
     train_id = train_schedule['train_id']
     n = train_schedule['full_cars']
 
-    def crane_worker(env, crane_id):
+    def crane_worker(env, track_id):
         unloaded = 0
         while unloaded < n:
             ic = yield terminal.train_ic_stores.get(lambda x: x.train_id == train_id)
-
+            crane_id = yield terminal.cranes.get(lambda c: c.track_id == track_id)
             crane_unload_time = (state.CONTAINERS_PER_CRANE_MOVE_MEAN+ random.uniform(0, state.CRANE_MOVE_DEV_TIME))
             yield env.timeout(crane_unload_time)
             yield terminal.chassis.put(ic)
@@ -171,13 +171,16 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
 
                 print(f"[Event] All ICs for train-{train_id} have been unloaded at {env.now}.")
 
-        yield terminal.cranes.put(crane_id)
+            yield terminal.cranes.put(crane_id)
 
-    cranes_to_use = [c for c in terminal.cranes.items if c.track_id == track_id]
-    for crane in cranes_to_use:
-        yield terminal.cranes.get(lambda c: c == crane)
-        print(f"[DEBUG] Crane unload: {crane} for {train_schedule['train_id']}, remaining={len(terminal.cranes.items)}")
-        env.process(crane_worker(env, crane))
+        print("crane unload complete.")
+
+    # cranes_to_use = [c for c in terminal.cranes.items if c.track_id == track_id]
+    # print("cranes_to_use:", cranes_to_use)
+    env.process(crane_worker(env, track_id))
+    # for crane in cranes_to_use:
+    #     print(f"[DEBUG] Crane unload: {crane} for {train_schedule['train_id']}, remaining={len(terminal.cranes.items)}")
+    #     env.process(crane_worker(env, track_id, crane))
 
 
 def get_hostler(terminal):
