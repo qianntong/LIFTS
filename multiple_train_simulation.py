@@ -35,7 +35,9 @@ class Terminal:
             track_id = item[0]
             cranes_on_this_track = item[1]
             for crane_number in range(1, cranes_on_this_track + 1):
-                self.cranes.put(crane(type='Hybrid', id=crane_number, track_id=track_id))
+                c = crane(type='Hybrid', id=crane_number, track_id=track_id)
+                self.cranes.put(c)
+                print(f"[DEBUG] Init crane: track={track_id}, id={crane_number}, obj={id(c)}")
 
         self.train_pool_stores = simpy.Store(env, capacity=99)  # train queue capacity
         self.train_ic_stores = simpy.FilterStore(env, capacity=9999)
@@ -136,10 +138,11 @@ def check_ic_picked_complete(env, terminal, train_schedule):
     train_id = train_schedule['train_id']
     remaining_ic = sum((getattr(item, 'type', None) == 'Inbound') and (getattr(item, 'train_id', None) == train_id) for item in terminal.chassis.items)
 
-    if (remaining_ic == 0
-            and terminal.train_ic_unload_events[train_schedule['train_id']].triggered
+    if (remaining_ic == 0 and terminal.train_ic_unload_events[train_schedule['train_id']].triggered
             and not terminal.train_ic_picked_events[train_schedule['train_id']].triggered):
         terminal.train_ic_picked_events[train_schedule['train_id']].succeed()
+        print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
+
         print(f"[Event] All ICs for Train-{train_schedule['train_id']} have been picked up by hostlers.")
 
 
@@ -157,11 +160,15 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
             yield terminal.chassis.put(ic)
             record_container_event(ic.to_string(), "crane_unload", env.now)
             env.process(container_process(env, terminal, train_schedule))
-
             unloaded += 1
+            print(f"[DEBUG] {env.now}: Train {train_id}, unloaded {unloaded}/{n}")
 
-            if unloaded == n and not terminal.train_ic_unload_events[train_id].triggered:
+            ic_remaining = sum((item.type == 'Inbound') and (item.train_id == train_id) for item in terminal.train_ic_stores.items)
+            # if unloaded == n and not terminal.train_ic_unload_events[train_id].triggered:
+            if ic_remaining == 0 and not terminal.train_ic_unload_events[train_id].triggered:
                 terminal.train_ic_unload_events[train_id].succeed()
+                print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
+
                 print(f"[Event] All ICs for train-{train_id} have been unloaded at {env.now}.")
 
         yield terminal.cranes.put(crane_id)
@@ -169,6 +176,7 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
     cranes_to_use = [c for c in terminal.cranes.items if c.track_id == track_id]
     for crane in cranes_to_use:
         yield terminal.cranes.get(lambda c: c == crane)
+        print(f"[DEBUG] Crane unload: {crane} for {train_schedule['train_id']}, remaining={len(terminal.cranes.items)}")
         env.process(crane_worker(env, crane))
 
 
@@ -249,6 +257,8 @@ def handle_remaining_oc(env, terminal, train_schedule):
             print(f"Time {env.now:.3f}: All OC handled for train {train_id}.")
             if not terminal.train_oc_prepared_events[train_id].triggered:
                 terminal.train_oc_prepared_events[train_id].succeed()
+                print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
+
             return
 
         # 2) hostler transport OC from paring slots
@@ -304,14 +314,19 @@ def crane_load_process(env, terminal, track_id, train_schedule):
             yield terminal.train_oc_stores.put(oc)
             loaded += 1
 
-            if loaded == total_oc and not terminal.train_end_load_events[train_id].triggered:
+            oc_remaining = sum((item.type == 'Outbound') and (item.train_id == train_id) for item in terminal.chassis.items)
+            # if loaded == total_oc and not terminal.train_end_load_events[train_id].triggered:
+            if oc_remaining == 0 and not terminal.train_end_load_events[train_id].triggered:
                 terminal.train_end_load_events[train_id].succeed()
+                print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
+
                 print(f"Time {env.now:.3f}: All OCs loaded. Train-{train_id} is fully loaded and ready to depart.")
         yield terminal.cranes.put(crane_id)
 
     cranes_to_use = [c for c in terminal.cranes.items if c.track_id == track_id]
     for crane in cranes_to_use:
         yield terminal.cranes.get(lambda c: c == crane)
+        print(f"[DEBUG] Crane load: {crane} for {train_schedule['train_id']}, remaining={len(terminal.cranes.items)}")
         env.process(crane_worker(env, crane))
 
 
@@ -333,6 +348,7 @@ def handle_train_departure(env, terminal, train_schedule, train_id, track_id, ar
     state.time_per_train[train_schedule['train_id']] = env.now - arrival_time
 
     terminal.train_departed_events[train_schedule['train_id']].succeed()
+    print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
 
 
 def train_process_per_track(env, terminal, track_id, train_schedule, train_id, arrival_time):
@@ -353,6 +369,8 @@ def train_process_per_track(env, terminal, track_id, train_schedule, train_id, a
     # crane loading
     # only when 1. all_ic_picked (chassis), 2. all_oc_picked (parking slots) & 3. all_oc_prepared (chassis) satisfied -> crane loading starts
     terminal.train_start_load_events[train_schedule['train_id']].succeed()
+    print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
+
     env.process(crane_load_process(env, terminal, track_id=track_id, train_schedule=train_schedule))
     yield terminal.train_end_load_events[train_schedule['train_id']]
 
@@ -376,14 +394,14 @@ def initialize_train_events(env, terminal, train_id):
         if train_id not in d or d[train_id].triggered:
             d[train_id] = env.event()
 
+    print(f"[DEBUG] Initialize events for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
+
 
 def process_train_arrival(env, terminal, train_schedule):
     global state
 
     train_id = train_schedule["train_id"]
     arrival_time = train_schedule["arrival_time"]
-
-    # Create events as processing conditions
     terminal.all_trucks_arrived_events[train_schedule['train_id']] = env.event() # condition for train arrival
 
     # Initialize dictionary
@@ -445,16 +463,16 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
 
     # Train timetable: shorter headway
     train_timetable = [
-        {"train_id": 32, "arrival_time": 0, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 2,
+        {"train_id": 32, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 2,
          "truck_number": 3},  # test: ic > oc
         {"train_id": 13, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 1, "oc_number": 3,
          "truck_number": 3},  # test: ic < oc
         {"train_id": 55, "arrival_time": 0.4, "departure_time": 10, "empty_cars": 0, "full_cars": 5, "oc_number": 5,
          "truck_number": 5},  # test: ic = oc
-        {"train_id": 44, "arrival_time": 0.5, "departure_time": 10, "empty_cars": 0, "full_cars": 2, "oc_number": 2,
+        {"train_id": 22, "arrival_time": 0.5, "departure_time": 10, "empty_cars": 0, "full_cars": 2, "oc_number": 2,
          "truck_number": 2},  # test: ic = oc
-        {"train_id": 17, "arrival_time": 0.6, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 1,
-         "truck_number": 3},  # test: ic < oc
+        {"train_id": 14, "arrival_time": 0.6, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 1,
+         "truck_number": 4},  # test: ic > oc
         ]
 
     truck_number = max([entry['truck_number'] for entry in train_timetable])
