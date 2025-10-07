@@ -317,7 +317,6 @@ def crane_load_process(env, terminal, track_id, train_schedule):
             yield terminal.train_oc_stores.put(oc)
             loaded += 1
 
-            # 检查是否所有 OC 已完成装载
             oc_remaining = sum(
                 (item.type == 'Outbound') and (item.train_id == train_id)
                 for item in terminal.chassis.items
@@ -326,11 +325,9 @@ def crane_load_process(env, terminal, track_id, train_schedule):
                 terminal.train_end_load_events[train_id].succeed()
                 print(f"Time {env.now:.3f}: All OCs loaded. Train-{train_id} ready to depart.")
 
-        # ✅ 装载完毕后归还 crane
         yield crane_store.put(crane)
         print(f"[DEBUG] {env.now:.3f}: {crane} returned to Track-{track_id} pool after loading.")
 
-    # ✅ 从该轨的资源池中取出所有 crane
     cranes_to_use = []
     while crane_store.items:
         crane = yield crane_store.get()
