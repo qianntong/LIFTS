@@ -154,20 +154,32 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
     def unload_crane_worker(env):
         print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id]: {terminal.cranes_by_track[track_id].items} (before get)")
         crane = yield terminal.cranes_by_track[track_id].get()
+        if train_id == 32:
+            print(train_id)
         print(f"[DEBUG] {env.now:.3f}: {crane} starts unloading for Train-{train_id}")
 
         while True:
+            if train_id == 32:
+                print(train_id)
             if not any((item.train_id == train_id) for item in terminal.train_ic_stores.items):
                 break
             
+            print(f"[DEBUG] {env.now:.3f}: [track_id={track_id}, train_id={train_id}]: {crane} (before getting IC)")
             ic = yield terminal.train_ic_stores.get(lambda x: x.train_id == train_id)
+            print(f"[DEBUG] {env.now:.3f}: [track_id={track_id}, train_id={train_id}]: {crane} (after getting IC {ic})")
             crane_unload_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
             yield env.timeout(crane_unload_time)
+            print(f"[DEBUG] {env.now:.3f}: [track_id={track_id}, train_id={train_id}, crane={crane}]: {terminal.chassis.items} (before putting IC)")
             yield terminal.chassis.put(ic)
+            print(f"[DEBUG] {env.now:.3f}: [track_id={track_id}, train_id={train_id}, crane={crane}]: {terminal.chassis.items} (after putting IC)")
             record_container_event(ic.to_string(), f"crane_unload_by_{crane}", env.now)
             env.process(container_process(env, terminal, train_schedule))
 
         print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (unloading complete, before put)")
+        if train_id == 22:
+            print(train_id)
+        if train_id == 32:
+            print(train_id)
         yield terminal.cranes_by_track[track_id].put(crane)
         print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (unloading complete, after put)")
 
@@ -211,12 +223,16 @@ def crane_load_process(env, terminal, track_id, train_schedule):
                 print(f"Time {env.now:.3f}: All OCs loaded. Train-{train_id} ready to depart.")
 
         print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (loading complete, before put)")
+        if train_id == 32:
+            print(train_id)
         yield crane_store.put(crane)
         print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (loading complete, after put)")
         print(f"[DEBUG] {env.now:.3f}: {crane} returned to Track-{track_id} pool after loading.")
 
     cranes_to_use = []
     while crane_store.items:
+        if train_id == 32:
+            print(train_id)
         crane = yield crane_store.get()
         cranes_to_use.append(crane)
 
