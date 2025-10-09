@@ -159,7 +159,7 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
         while True:
             if not any((item.train_id == train_id) for item in terminal.train_ic_stores.items):
                 break
-
+            
             ic = yield terminal.train_ic_stores.get(lambda x: x.train_id == train_id)
             crane_unload_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
             yield env.timeout(crane_unload_time)
@@ -167,7 +167,9 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
             record_container_event(ic.to_string(), f"crane_unload_by_{crane}", env.now)
             env.process(container_process(env, terminal, train_schedule))
 
+        print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (unloading complete, before put)")
         yield terminal.cranes_by_track[track_id].put(crane)
+        print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (unloading complete, after put)")
 
     num_cranes = terminal.cranes_per_track[track_id]
     unload_processes = [env.process(unload_crane_worker(env)) for _ in range(num_cranes)]
@@ -177,6 +179,53 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
         terminal.train_ic_unload_events[train_id].succeed()
         print(f"[Event] All ICs for Train-{train_id} on Track-{track_id} unloaded at {env.now:.3f}")
 
+def crane_load_process(env, terminal, track_id, train_schedule):
+    """Load outbound containers (OC) from chassis onto train using cranes."""
+    global state
+    train_id = train_schedule['train_id']
+    yield terminal.train_start_load_events[train_id]
+    crane_store = terminal.cranes_by_track[track_id]
+
+    def load_crane_worker(env, crane):
+        loaded = 0
+
+        total_oc = sum(item.type == 'Outbound' and item.train_id == train_id for item in terminal.chassis.items)
+
+        print(f"[DEBUG] {env.now:.3f}: {crane} starts loading for Train-{train_id}, total {total_oc} OCs")
+
+        while loaded < total_oc:
+            oc = yield terminal.chassis.get(lambda x: x.type == 'Outbound' and x.train_id == train_id)
+            crane_load_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
+            yield env.timeout(crane_load_time)
+            record_container_event(oc.to_string(), "crane_load", env.now)
+            print(f"Time {env.now:.3f}: {crane} finished loading {oc} onto Train-{train_id}.")
+            yield terminal.train_oc_stores.put(oc)
+            loaded += 1
+
+            oc_remaining = sum(
+                (item.type == 'Outbound') and (item.train_id == train_id)
+                for item in terminal.chassis.items
+            )
+            if oc_remaining == 0 and not terminal.train_end_load_events[train_id].triggered:
+                terminal.train_end_load_events[train_id].succeed()
+                print(f"Time {env.now:.3f}: All OCs loaded. Train-{train_id} ready to depart.")
+
+        print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (loading complete, before put)")
+        yield crane_store.put(crane)
+        print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (loading complete, after put)")
+        print(f"[DEBUG] {env.now:.3f}: {crane} returned to Track-{track_id} pool after loading.")
+
+    cranes_to_use = []
+    while crane_store.items:
+        crane = yield crane_store.get()
+        cranes_to_use.append(crane)
+
+    print(f"Crane load on Track-{track_id}: {cranes_to_use}")
+
+    load_processes = [env.process(load_crane_worker(env, c)) for c in cranes_to_use]
+    yield simpy.events.AllOf(env, load_processes)
+
+    print(f"[EVENT] {env.now:.3f}: All cranes finished loading for Train-{train_id} on Track-{track_id}")
 
 def get_hostler(terminal):
     parked_available = len(terminal.parked_hostlers.items) > 0
@@ -292,54 +341,6 @@ def truck_exit(env, terminal, truck, ic, train_schedule):
     terminal.out_gates.release(out_gate_request)
     record_container_event(ic.to_string(), 'truck_exit', env.now)
     yield terminal.truck_store.put(truck)
-
-
-def crane_load_process(env, terminal, track_id, train_schedule):
-    """Load outbound containers (OC) from chassis onto train using cranes."""
-    global state
-    train_id = train_schedule['train_id']
-    yield terminal.train_start_load_events[train_id]
-    crane_store = terminal.cranes_by_track[track_id]
-
-    def load_crane_worker(env, crane):
-        loaded = 0
-
-        total_oc = sum(item.type == 'Outbound' and item.train_id == train_id for item in terminal.chassis.items)
-
-        print(f"[DEBUG] {env.now:.3f}: {crane} starts loading for Train-{train_id}, total {total_oc} OCs")
-
-        while loaded < total_oc:
-            oc = yield terminal.chassis.get(lambda x: x.type == 'Outbound' and x.train_id == train_id)
-            crane_load_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
-            yield env.timeout(crane_load_time)
-            record_container_event(oc.to_string(), "crane_load", env.now)
-            print(f"Time {env.now:.3f}: {crane} finished loading {oc} onto Train-{train_id}.")
-            yield terminal.train_oc_stores.put(oc)
-            loaded += 1
-
-            oc_remaining = sum(
-                (item.type == 'Outbound') and (item.train_id == train_id)
-                for item in terminal.chassis.items
-            )
-            if oc_remaining == 0 and not terminal.train_end_load_events[train_id].triggered:
-                terminal.train_end_load_events[train_id].succeed()
-                print(f"Time {env.now:.3f}: All OCs loaded. Train-{train_id} ready to depart.")
-
-        yield crane_store.put(crane)
-        print(f"[DEBUG] {env.now:.3f}: {crane} returned to Track-{track_id} pool after loading.")
-
-    cranes_to_use = []
-    while crane_store.items:
-        crane = yield crane_store.get()
-        cranes_to_use.append(crane)
-
-    print(f"Crane load on Track-{track_id}: {cranes_to_use}")
-
-    load_processes = [env.process(load_crane_worker(env, c)) for c in cranes_to_use]
-    yield simpy.events.AllOf(env, load_processes)
-
-    print(f"[EVENT] {env.now:.3f}: All cranes finished loading for Train-{train_id} on Track-{track_id}")
-
 
 def handle_train_departure(env, terminal, train_schedule, train_id, track_id, arrival_time):
     global state
