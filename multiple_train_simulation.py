@@ -495,8 +495,24 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
          "truck_number": 3},  # test: ic > oc
         {"train_id": 13, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 1, "oc_number": 3,
          "truck_number": 3},  # test: ic < oc
+        {"train_id": 15, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 1, "oc_number": 3,
+         "truck_number": 3},  # test: ic < oc
+        {"train_id": 17, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 1, "oc_number": 3,
+         "truck_number": 3},  # test: ic < oc
         {"train_id": 22, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 2, "oc_number": 2,
          "truck_number": 2},  # test: ic = oc
+        {"train_id": 77, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 12, "oc_number": 15,
+         "truck_number": 15},  # test: ic = oc
+        {"train_id": 78, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 7, "oc_number": 7,
+         "truck_number": 7},  # test: ic = oc
+        {"train_id": 79, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 7, "oc_number": 7,
+         "truck_number": 7},  # test: ic = oc
+        {"train_id": 80, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 7, "oc_number": 7,
+         "truck_number": 7},  # test: ic = oc
+        {"train_id": 81, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 7, "oc_number": 7,
+         "truck_number": 7},  # test: ic = oc
+        {"train_id": 82, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 7, "oc_number": 7,
+         "truck_number": 7},  # test: ic = oc
         {"train_id": 14, "arrival_time": 0.4, "departure_time": 10, "empty_cars": 0, "full_cars": 1, "oc_number": 4,
          "truck_number": 4},  # test: ic < oc
         ]
