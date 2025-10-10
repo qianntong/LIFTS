@@ -221,7 +221,6 @@ def crane_load_process(env, terminal, track_id, train_schedule):
             print(f"[DEBUG] {env.now:.3f}: [track_id={track_id}, train_id={train_id}, crane={crane}]: {terminal.train_oc_stores.items} (before putting OC)")
             yield terminal.train_oc_stores.put(oc)
             print(f"[DEBUG] {env.now:.3f}: [track_id={track_id}, train_id={train_id}, crane={crane}]: {terminal.train_oc_stores.items} (after putting OC)")
-
             record_container_event(oc.to_string(), f"crane_load", env.now)
 
         print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id}]: {terminal.cranes_by_track[track_id].items} (loading complete, before put)")
