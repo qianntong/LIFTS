@@ -7,11 +7,11 @@ from vehicle import *
 class Terminal:
     def __init__(self, env, truck_capacity, chassis_count):
         self.env = env
-        self.tracks = simpy.Store(env, capacity=2)
+        self.tracks = simpy.Store(env, capacity=3)
         for track_id in range(1, self.tracks.capacity + 1):
             self.tracks.put(track_id)
         # Example of number of cranes per track
-        self.cranes_per_track = {1: 2, 2: 2}    # user-define
+        self.cranes_per_track = {1: 2, 2: 2, 3:1}    # user-define
         self.cranes_by_track = {
             track_id: simpy.Store(env, capacity=num_cranes)
             for track_id, num_cranes in self.cranes_per_track.items()}
