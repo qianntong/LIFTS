@@ -9,7 +9,7 @@ import polars as pl
 from pathlib import Path
 
 class Terminal:
-    def __init__(self, env, config, truck_capacity, chassis_count):
+    def __init__(self, env, config):
         self.env = env
 
         self.config = config
@@ -550,13 +550,9 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     state.train_consist_plan = train_consist_plan
     state.initialize()
 
-    # Create environment
+    # Create environment & terminal resources
     env = simpy.Environment()
-
-    # Train timetable: shorter headway
-    truck_number = config["simulation"]["train_batch_size"]
-    chassis_count = truck_number
-    terminal = Terminal(env, config=config, truck_capacity=truck_number, chassis_count=chassis_count)
+    terminal = Terminal(env, config=config)
 
     print("\nTrain timetable:")
     for schedule in train_timetable:
