@@ -1,0 +1,18 @@
+simulation:
+  length: 24               # total simulation time (hours)
+  train_number: 7          # number of trains in the simulation
+  train_batch_size: 20     # full_cars = oc_number = truck_number
+
+terminal:
+  track_number: 2
+  cranes_per_track: 4
+  hostler_number: 100
+  hostler_diesel_percentage: 1
+
+gates:
+  in_gate_numbers: 3
+  out_gate_numbers: 3
+
+layout:
+  file_path: "input/layout.xlsx"   # yard geometry file
+  distance_scaling: 1.0      # optional scaling factor for distance calculation (e.g. meters per block)

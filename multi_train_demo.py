@@ -1,23 +1,46 @@
 import simpy
 import random
-from distances import *
+from distance import *
 from vehicle import *
-
+import yaml
+import pandas as pd
+import numpy as np
+import polars as pl
+from pathlib import Path
 
 class Terminal:
-    def __init__(self, env, truck_capacity, chassis_count):
+    def __init__(self, env, config, truck_capacity, chassis_count):
         self.env = env
-        self.tracks = simpy.Store(env, capacity=2)
+
+        self.config = config
+        term_cfg = config["terminal"]
+        self.track_number = term_cfg["track_number"]
+        self.cranes_per_track = term_cfg["cranes_per_track"]
+        self.hostler_number = term_cfg["hostler_number"]
+        self.hostler_diesel_percentage = term_cfg["hostler_diesel_percentage"]
+        gate_cfg = config["gates"]
+        self.in_gate_numbers = gate_cfg["in_gate_numbers"]
+        self.out_gate_numbers = gate_cfg["out_gate_numbers"]
+
+
+        self.tracks = simpy.Store(env, capacity=self.track_number)
         for track_id in range(1, self.tracks.capacity + 1):
             self.tracks.put(track_id)
-        # Example of number of cranes per track
-        self.cranes_per_track = {1: 2, 2: 2}    # user-define
+
+        # cranes
+        self.cranes_per_track = {
+            track_id: term_cfg["cranes_per_track"]
+            for track_id in range(1, self.track_number + 1)
+        }
+
         self.cranes_by_track = {
             track_id: simpy.Store(env, capacity=num_cranes)
-            for track_id, num_cranes in self.cranes_per_track.items()}
+            for track_id, num_cranes in self.cranes_per_track.items()
+        }
+
         for track_id, num_cranes in self.cranes_per_track.items():
             for crane_number in range(1, num_cranes + 1):
-                c = crane(type='Hybrid', id=crane_number, track_id=track_id)
+                c = crane(type="Hybrid", id=crane_number, track_id=track_id)
                 self.cranes_by_track[track_id].put(c)
 
         self.all_trucks_arrived_events = {}  # condition for train arrival
@@ -47,12 +70,75 @@ class Terminal:
         self.truck_store = simpy.Store(env)
 
         # Hostler setup
-        hostler_diesel = round(state.HOSTLER_NUMBER * state.HOSTLER_DIESEL_PERCENTAGE)
-        hostler_electric = state.HOSTLER_NUMBER - hostler_diesel
+        hostler_total = self.hostler_number
+        hostler_diesel = round(hostler_total * self.hostler_diesel_percentage)
+        hostler_electric = hostler_total - hostler_diesel
+
+        self.parked_hostlers = simpy.Store(env, capacity=hostler_total)
+        self.active_hostlers = simpy.Store(env, capacity=hostler_total)
+
         hostlers = [hostler(id=i, type="Diesel") for i in range(hostler_diesel)] + \
-                   [hostler(id=i + hostler_diesel, type="electric") for i in range(hostler_electric)]
+                   [hostler(id=i + hostler_diesel, type="Electric") for i in range(hostler_electric)]
         for hostler_id in hostlers:
-            self.parked_hostlers.put(hostler_id)    # initialization: all hostlers parked
+            self.parked_hostlers.put(hostler_id)
+        # hostler_diesel = round(state.HOSTLER_NUMBER * state.HOSTLER_DIESEL_PERCENTAGE)
+        # hostler_electric = state.HOSTLER_NUMBER - hostler_diesel
+        # hostlers = [hostler(id=i, type="Diesel") for i in range(hostler_diesel)] + \
+        #            [hostler(id=i + hostler_diesel, type="electric") for i in range(hostler_electric)]
+        # for hostler_id in hostlers:
+        #     self.parked_hostlers.put(hostler_id)    # initialization: all hostlers parked
+
+
+def load_config(path="config.yaml"):
+    with open(path, "r") as f:
+        config = yaml.safe_load(f)
+    return config
+
+
+# layout <- batch size
+def load_layout(config):
+    layout_file = Path(config["layout"]["file_path"])
+    batch_size = config["simulation"]["train_batch_size"]
+    df = pd.read_excel(layout_file)
+
+    row = df.loc[df["train batch (k)"] == batch_size]
+    if row.empty:
+        raise ValueError(f"No layout found for train batch size {batch_size}")
+
+    row = row.iloc[0]
+    layout_params = {
+        "M": int(row["rows (M)"]),
+        "N": int(row["cols (N)"]),
+        "n_t": int(row["trainlanes (n_t)"]),
+        "n_p": int(row["parknglanes (n_p)"]),
+        "n_r": int(row["blocklen (n_r)"]),
+    }
+    print(f"[INFO] Layout parameters for batch={batch_size}: {layout_params}")
+    return layout_params
+
+
+def generate_timetable(config):
+    sim_length = config["simulation"]["length"]
+    train_number = config["simulation"]["train_number"]
+    batch_size = config["simulation"]["train_batch_size"]
+
+    arrival_times = np.linspace(0.1, sim_length, train_number)
+    timetable = []
+    for i in range(train_number):
+        train_id = i + 1
+        t = {
+            "train_id": train_id,
+            "arrival_time": float(arrival_times[i]),
+            "departure_time": float(arrival_times[i] + 10),
+            "empty_cars": 0,
+            "full_cars": batch_size,
+            "oc_number": batch_size,
+            "truck_number": batch_size,
+        }
+        timetable.append(t)
+
+    print(f"[INFO] Generated timetable for {train_number} trains, batch={batch_size}")
+    return timetable
 
 
 def record_container_event(container, event_type, timestamp):
@@ -250,13 +336,13 @@ def container_process(env, terminal, train_schedule):
     # 2. hostler travel time 1: the empty hostler pick up the IC
     # hostler_travel_time_to_track = 0.1
     current_veh_num =  len(terminal.parked_hostlers.items) + 1
-    hostler_travel_time_to_track, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length, d_h_min, d_h_max)
+    hostler_travel_time_to_track, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
     yield env.timeout(hostler_travel_time_to_track)
 
     # 3. hostler travel time 2: the loaded hostler going to drop off the IC
     # hostler_travel_time_to_track = 0.1
     current_veh_num = len(terminal.parked_hostlers.items) + 1
-    hostler_travel_time_to_track, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length, d_h_min, d_h_max)
+    hostler_travel_time_to_track, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
     yield env.timeout(hostler_travel_time_to_track)
     terminal.parking_slots.put(ic)
     record_container_event(ic.to_string(), 'hostler_pickup', env.now)
@@ -275,7 +361,7 @@ def container_process(env, terminal, train_schedule):
 
     # 4. Assign a truck to pick up IC
     assigned_truck = yield terminal.truck_store.get()
-    truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(assigned_truck, train_schedule, terminal,total_lane_length,d_t_min, d_t_max)
+    truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(assigned_truck, train_schedule, terminal)
     yield env.timeout(truck_travel_time)
     ic = yield terminal.parking_slots.get(lambda x: x.type == 'Inbound')
     record_container_event(ic.to_string(), 'truck_pickup', env.now)
@@ -303,12 +389,12 @@ def handle_remaining_oc(env, terminal, train_schedule):
 
         # 3) assign hostler
         current_veh_num = len(terminal.parked_hostlers.items) + 1
-        hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length, d_h_min, d_h_max)
+        hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
         yield env.timeout(hostler_travel_time_to_parking)
 
         # 4) hostler loaded with an OC -> chassis
         # travel_time_to_chassis = 0.1
-        hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num, total_lane_length, d_h_min, d_h_max)
+        hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
         yield env.timeout(hostler_travel_time_to_chassis)
         # print(f"Time {env.now:.3f}: {assigned_hostler} dropped off OC {oc} onto chassis")
         yield terminal.chassis.put(oc)
@@ -454,6 +540,12 @@ def process_train_arrival(env, terminal, train_schedule):
 
 def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=None):
     global state
+
+    config = load_config("input/config.yaml")
+    layout = load_layout(config)
+    train_timetable = generate_timetable(config)
+
+    state.layout = layout
     state.terminal = terminal
     state.train_consist_plan = train_consist_plan
     state.initialize()
@@ -462,32 +554,14 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     env = simpy.Environment()
 
     # Train timetable: shorter headway
-    train_timetable = [
-        {"train_id": 55, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 5, "oc_number": 5,
-         "truck_number": 5},  # test: ic = oc
-        {"train_id": 32, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 2,
-         "truck_number": 3},  # test: ic > oc
-        {"train_id": 13, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 7, "oc_number": 3,
-         "truck_number": 7},  # test: ic < oc
-        {"train_id": 15, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 3,
-         "truck_number": 3},  # test: ic < oc
-        {"train_id": 17, "arrival_time": 0.1, "departure_time": 10, "empty_cars": 0, "full_cars": 3, "oc_number": 3,
-         "truck_number": 3},  # test: ic < oc
-        {"train_id": 22, "arrival_time": 0.3, "departure_time": 10, "empty_cars": 0, "full_cars": 2, "oc_number": 2,
-         "truck_number": 2},  # test: ic = oc
-        {"train_id": 14, "arrival_time": 0.4, "departure_time": 10, "empty_cars": 0, "full_cars": 5, "oc_number": 4,
-         "truck_number": 5},  # test: ic < oc
-        ]
+    truck_number = config["simulation"]["train_batch_size"]
+    chassis_count = truck_number
+    terminal = Terminal(env, config=config, truck_capacity=truck_number, chassis_count=chassis_count)
 
-    truck_number = max([entry['truck_number'] for entry in train_timetable])
-    chassis_count = max([entry['empty_cars'] + entry['full_cars'] for entry in train_timetable])
-    terminal = Terminal(env, truck_capacity=truck_number, chassis_count=chassis_count)
-
-    # Trains arrive according to timetable
-    print("train timetable:")
-    for i, train_schedule in enumerate(train_timetable):
-        print(train_schedule)
-        env.process(process_train_arrival(env, terminal, train_schedule))
+    print("\nTrain timetable:")
+    for schedule in train_timetable:
+        print(schedule)
+        env.process(process_train_arrival(env, terminal, schedule))
 
     num_tracks = len(terminal.tracks.items) if hasattr(terminal.tracks, "items") else len(terminal.tracks)
     num_cranes = sum(len(store.items) for store in terminal.cranes_by_track.values())
