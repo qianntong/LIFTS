@@ -12,54 +12,87 @@ def load_config(config_path="input/config.yaml"):
     return config
 
 
-def load_layout(config):
-    layout_path = Path(config["layout"]["file_path"])
-    batch_size = config["simulation"]["train_batch_size"]
-    df = pd.read_excel(layout_path)
+def get_layout(config):
+    """
+    Return layout parameters, supporting two modes:
+      - fixed: use layout values directly from YAML
+      - adaptive: load layout from Excel based on train batch size
+    """
+    layout_cfg = config["layout"]
+    mode = layout_cfg.get("mode", "fixed").lower()
 
-    row = df.loc[df["train batch (k)"] == batch_size]
-    if row.empty:
-        raise ValueError(f"No layout found for train batch size {batch_size}")
-    row = row.iloc[0]
-
-    layout = {
-        "M": int(row["rows (M)"]),
-        "N": int(row["cols (N)"]),
-        "n_t": int(row["trainlanes (n_t)"]),
-        "n_p": int(row["parknglanes (n_p)"]),
-        "n_r": int(row["blocklen (n_r)"]),
-    }
+    if mode == "adaptive":
+        layout_path = Path(layout_cfg["file_path"])
+        batch_size = config["simulation"]["train_batch_size"]
+        df = pd.read_excel(layout_path)
+        row = df.loc[df["train batch (k)"] == batch_size]
+        if row.empty:
+            raise ValueError(f"No layout found for train batch size {batch_size}")
+        row = row.iloc[0]
+        layout = {
+            "M": int(row["rows (M)"]),
+            "N": int(row["cols (N)"]),
+            "n_t": int(row["trainlanes (n_t)"]),
+            "n_p": int(row["parknglanes (n_p)"]),
+            "n_r": int(row["blocklen (n_r)"]),
+            "P": int(layout_cfg.get("P", 10)),
+            "mode": "adaptive"
+        }
+    else:
+        layout = {
+            "M": int(layout_cfg["M"]),
+            "N": int(layout_cfg["N"]),
+            "n_t": int(layout_cfg["n_t"]),
+            "n_p": int(layout_cfg["n_p"]),
+            "n_r": int(layout_cfg["n_r"]),
+            "P": int(layout_cfg.get("P", 10)),
+            "mode": "fixed"
+        }
+    print(f"[INFO] layout: {layout}")
     return layout
 
 
-def load_config_and_layout(config_path="input/config.yaml"):
-    config = load_config(config_path)
-    layout = load_layout(config)
-    return config, layout
+def calculate_distances(config_path="input/config.yaml", actual_railcars=None):
+    """Compute yard geometric distances.
+       If actual_railcars is provided, compute track-level mu correction.
+       Otherwise initialize with n=0 (idle state)."""
 
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
 
-def calculate_distances(config_path="input/config.yaml"):
-    config, layout = load_config_and_layout(config_path)
+    yard_cfg = config["yard"]
+    layout_cfg = config["layout"]
 
-    k = config["simulation"]["train_batch_size"]
-    M, N, n_t, n_p, n_r = layout["M"], layout["N"], layout["n_t"], layout["n_p"], layout["n_r"]
+    # --- layout (adaptive or fixed) ---
+    mode = layout_cfg.get("mode", "adaptive").lower()
+    if mode == "adaptive":
+        df = pd.read_excel(Path(layout_cfg["file_path"]))
+        batch_size = config["simulation"]["train_batch_size"]
+        row = df.loc[df["train batch (k)"] == batch_size]
+        if row.empty:
+            raise ValueError(f"No layout found for train batch size {batch_size}")
+        row = row.iloc[0]
+        M, N, n_t, n_p, n_r = int(row["rows (M)"]), int(row["cols (N)"]), int(row["trainlanes (n_t)"]), int(row["parknglanes (n_p)"]), int(row["blocklen (n_r)"])
+    else:
+        M, N, n_t, n_p, n_r = int(layout_cfg["M"]), int(layout_cfg["N"]), int(layout_cfg["n_t"]), int(layout_cfg["n_p"]), int(layout_cfg["n_r"])
 
-    BL_l = 10 * n_r       # each block length
-    BL_w = 80             # each block width
-    P = 10                # aisle width
-
-    A_yard = M * 10 * n_r + (M + 1) * n_p * P  # yard vertical
-    B_yard = N * 80 + (N + 1) * n_p * P        # yard perpendicular
+    # --- yard basic parameters ---
+    P = 10
+    BL_l = 10 * n_r
+    BL_w = 80
+    A_yard = M * 10 * n_r + (M + 1) * n_p * P  # yard length
+    B_yard = N * 80 + (N + 1) * n_p * P        # yard width
     total_lane_length = A_yard * (N + 1) + B_yard * (M + 1)
 
-    d_t = n_t * BL_l
-    d_y = M * N * BL_w
-    d_g = (n_t + n_p) * 5.0
-    total_distance = d_t + d_y + d_g
+    # --- geometry from yard config ---
+    railcar_length = float(yard_cfg["railcar_length"])
+    d_f = float(yard_cfg["d_f"])
+    d_x = float(yard_cfg["d_x"])
 
-    # print(f"[INFO] Layout parameters: k={k}, M={M}, N={N}, n_t={n_t}, n_p={n_p}, n_r={n_r}")
-    # print(f"[INFO] Yard geometry: A={A_yard:.1f}, B={B_yard:.1f}, total_lane_length={total_lane_length:.1f}")
-    # print(f"[INFO] Base distances: d_t={d_t:.2f}, d_y={d_y:.2f}, d_g={d_g:.2f}, total={total_distance:.2f}")
+    # --- railcar and track info ---
+    n_max = math.ceil(A_yard / railcar_length)
+    n = 0 if actual_railcars is None else int(actual_railcars)
+    mu = 1 if n == 0 else min(1.0, (n * railcar_length) / A_yard)
 
 
     if YARD_TYPE == 'parallel':
@@ -105,14 +138,13 @@ def calculate_distances(config_path="input/config.yaml"):
     else:
         raise ValueError("Invalid YARD_TYPE, choose 'parallel' or 'perpendicular'.")
 
-    # print(f"[INFO] Yard type: {YARD_TYPE}")
-    # print(f"[INFO] d_h_avg={d_h_avg:.2f}, d_r_avg={d_r_avg:.2f}, d_t_avg={d_t_avg:.2f}")
-
     # return total_distance
     return {
-        "M": M, "N": N, "n_t": n_t, "n_p": n_p, "n_r": n_r,
-        "P": P,
+        "M": M, "N": N, "n_t": n_t, "n_p": n_p, "n_r": n_r, "P": P,
+        "yard_length": A_yard,
         "total_lane_length": total_lane_length,
+        "railcar_length": railcar_length,
+        "n_max": n_max, "n": n, "mu": mu,
         "d_h_min": d_h_min, "d_h_max": d_h_max,
         "d_r_min": d_r_min, "d_r_max": d_r_max,
         "d_t_min": d_t_min, "d_t_max": d_t_max,
@@ -120,12 +152,10 @@ def calculate_distances(config_path="input/config.yaml"):
     }
 
 
-
 # Yard & Track fixed
-
 YARD_TYPE = 'parallel'  # choose 'perpendicular' or 'parallel'
 l_track = 1000   # The length of the whole track (ft)
-l_c = 20         # The length of a railcar and joint (ft)
+l_c = 60         # The length of a railcar and joint (ft)
 n_max = 10       # The maximum allowed railcars per track
 d_f = 15         # The offset distance between crossing and train (ft)
 d_x = 10         # The distance between two tracks (ft)

@@ -7,21 +7,51 @@ import pandas as pd
 import numpy as np
 import polars as pl
 from pathlib import Path
+import math
 
 class Terminal:
     def __init__(self, env, config):
         self.env = env
-
         self.config = config
-        term_cfg = config["terminal"]
-        self.track_number = term_cfg["track_number"]
-        self.cranes_per_track = term_cfg["cranes_per_track"]
-        self.hostler_number = term_cfg["hostler_number"]
-        self.hostler_diesel_percentage = term_cfg["hostler_diesel_percentage"]
-        gate_cfg = config["gates"]
-        self.in_gate_numbers = gate_cfg["in_gate_numbers"]
-        self.out_gate_numbers = gate_cfg["out_gate_numbers"]
 
+        # term_cfg = config["terminal"]
+        # self.cranes_per_track = term_cfg["cranes_per_track"]
+        # self.hostler_number = term_cfg["hostler_number"]
+        # self.hostler_diesel_percentage = term_cfg["hostler_diesel_percentage"]
+        # gate_cfg = config["gates"]
+        # self.in_gate_numbers = gate_cfg["in_gate_numbers"]
+        # self.out_gate_numbers = gate_cfg["out_gate_numbers"]
+        # yard_cfg = config["yards"]
+        # self.track_number = yard_cfg["track_number"]
+
+        # ==============================
+        # 🔹 1. 基本配置读取
+        # ==============================
+        yard_cfg = config["yard"]
+        term_cfg = config["terminal"]
+        gate_cfg = config["gates"]
+
+        self.yard_type = yard_cfg.get("yard_type", "parallel")
+        self.track_number = int(yard_cfg.get("track_number", 2))
+        self.receiving_track_numbers = int(yard_cfg.get("receiving_track_numbers", 10))
+        self.railcar_length = float(yard_cfg.get("railcar_length", 60))
+        self.d_f = float(yard_cfg.get("d_f", 15))
+        self.d_x = float(yard_cfg.get("d_x", 15))
+
+        self.cranes_per_track = int(term_cfg.get("cranes_per_track", 2))
+        self.hostler_number = int(term_cfg.get("hostler_number", 10))
+        self.hostler_diesel_percentage = float(term_cfg.get("hostler_diesel_percentage", 1))
+
+        self.in_gate_numbers = int(gate_cfg.get("in_gate_numbers", 3))
+        self.out_gate_numbers = int(gate_cfg.get("out_gate_numbers", 3))
+
+
+        # decouple / travel time related parameters
+        self.layout = layout
+        distances = calculate_distances(actual_railcars=None)
+        self.distances = distances
+        self.yard_length = distances["yard_length"]
+        self.track_capacity = distances["n_max"]
 
         self.tracks = simpy.Store(env, capacity=self.track_number)
         for track_id in range(1, self.tracks.capacity + 1):
@@ -95,26 +125,7 @@ def load_config(path="config.yaml"):
     return config
 
 
-# layout <- batch size
-def load_layout(config):
-    layout_file = Path(config["layout"]["file_path"])
-    batch_size = config["simulation"]["train_batch_size"]
-    df = pd.read_excel(layout_file)
 
-    row = df.loc[df["train batch (k)"] == batch_size]
-    if row.empty:
-        raise ValueError(f"No layout found for train batch size {batch_size}")
-
-    row = row.iloc[0]
-    layout_params = {
-        "M": int(row["rows (M)"]),
-        "N": int(row["cols (N)"]),
-        "n_t": int(row["trainlanes (n_t)"]),
-        "n_p": int(row["parknglanes (n_p)"]),
-        "n_r": int(row["blocklen (n_r)"]),
-    }
-    print(f"[INFO] Layout parameters for batch={batch_size}: {layout_params}")
-    return layout_params
 
 
 def generate_timetable(config):
@@ -229,13 +240,8 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
     def unload_crane_worker(env):
         # print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id]: {terminal.cranes_by_track[track_id].items} (before get)")
         crane = yield terminal.cranes_by_track[track_id].get()
-        # if train_id == 32:
-        #     print(train_id)
-        # print(f"[DEBUG] {env.now:.3f}: {crane} starts unloading for Train-{train_id}")
 
         while True:
-            # if train_id == 32:
-            #     print(train_id)
             if not any((item.train_id == train_id) for item in terminal.train_ic_stores.items):
                 break
 
@@ -247,13 +253,7 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
             record_container_event(ic.to_string(), f"crane_unload", env.now)
             env.process(container_process(env, terminal, train_schedule))
 
-        # print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id},train_id={train_id}]: {terminal.cranes_by_track[track_id].items} (unloading complete, before put)")
-        # if train_id == 22:
-        #     print(train_id)
-        # if train_id == 32:
-        #     print(train_id)
         yield terminal.cranes_by_track[track_id].put(crane)
-        # print(f"[DEBUG] {env.now:.3f}: terminal.cranes_by_track[track_id={track_id},train_id={train_id}]: {terminal.cranes_by_track[track_id].items} (unloading complete, after put)")
 
     num_cranes = terminal.cranes_per_track[track_id]
     unload_processes = [env.process(unload_crane_worker(env)) for _ in range(num_cranes)]
@@ -393,10 +393,8 @@ def handle_remaining_oc(env, terminal, train_schedule):
         yield env.timeout(hostler_travel_time_to_parking)
 
         # 4) hostler loaded with an OC -> chassis
-        # travel_time_to_chassis = 0.1
         hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
         yield env.timeout(hostler_travel_time_to_chassis)
-        # print(f"Time {env.now:.3f}: {assigned_hostler} dropped off OC {oc} onto chassis")
         yield terminal.chassis.put(oc)
         record_container_event(oc.to_string(), 'hostler_dropoff', env.now)
 
@@ -425,8 +423,6 @@ def handle_train_departure(env, terminal, train_schedule, train_id, track_id, ar
     else:
         delay_time = env.now - train_schedule["departure_time"]
         print(f"Time {env.now:.3f}: [DELAYED] Train {train_id} has been delayed for {delay_time} hours from the track {track_id}.")
-    # # terminal.tracks.put(track_id)
-    # yield terminal.tracks.put(track_id)
 
     for oc_id in range(terminal.OC_COUNT[train_schedule['train_id']],
                        terminal.OC_COUNT[train_schedule['train_id']] + train_schedule['oc_number']):
@@ -434,7 +430,6 @@ def handle_train_departure(env, terminal, train_schedule, train_id, track_id, ar
     state.time_per_train[train_schedule['train_id']] = env.now - arrival_time
 
     terminal.train_departed_events[train_schedule['train_id']].succeed()
-    # print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
 
 
 def train_process_per_track(env, terminal, track_id, train_schedule, train_id, arrival_time):
@@ -455,7 +450,6 @@ def train_process_per_track(env, terminal, track_id, train_schedule, train_id, a
     # crane loading
     # only when 1. all_ic_picked (chassis), 2. all_oc_picked (parking slots) & 3. all_oc_prepared (chassis) satisfied -> crane loading starts
     terminal.train_start_load_events[train_schedule['train_id']].succeed()
-    # print(f"[DEBUG] Succeed event for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
 
     env.process(crane_load_process(env, terminal, track_id=track_id, train_schedule=train_schedule))
     yield terminal.train_end_load_events[train_schedule['train_id']]
@@ -463,6 +457,7 @@ def train_process_per_track(env, terminal, track_id, train_schedule, train_id, a
     # train departure
     handle_train_departure(env, terminal, train_schedule, train_id, track_id, arrival_time)
     yield terminal.tracks.put(track_id)
+
 
 def initialize_train_events(env, terminal, train_id):
     for name in [
@@ -479,8 +474,6 @@ def initialize_train_events(env, terminal, train_id):
 
         if train_id not in d or d[train_id].triggered:
             d[train_id] = env.event()
-
-    # print(f"[DEBUG] Initialize events for Train {train_id}, id={id(terminal.train_ic_unload_events[train_id])}")
 
 
 def process_train_arrival(env, terminal, train_schedule):
@@ -542,7 +535,7 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     global state
 
     config = load_config("input/config.yaml")
-    layout = load_layout(config)
+    layout = get_layout(config)
     train_timetable = generate_timetable(config)
 
     state.layout = layout
