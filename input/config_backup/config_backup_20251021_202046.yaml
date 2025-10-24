@@ -1,0 +1,26 @@
+simulation:
+  length: 100
+  train_number: 10
+  train_batch_size: 40
+yard:
+  yard_type: parallel
+  track_number: 2
+  receiving_track_numbers: 10
+  railcar_length: 60
+  d_f: 15
+  d_x: 15
+terminal:
+  cranes_per_track: 2
+  hostler_number: 12
+  hostler_diesel_percentage: 1
+gates:
+  in_gate_numbers: 3
+  out_gate_numbers: 3
+layout:
+  file_path: input/multiple_layout.xlsx
+  mode: adaptive
+  M: 5
+  N: 5
+  n_t: 2
+  n_p: 2
+  n_r: 20

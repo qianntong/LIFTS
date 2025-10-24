@@ -1,10 +1,8 @@
-from parameters import *
 from scipy.stats import triang, uniform
 import math
 import yaml
 import pandas as pd
 from pathlib import Path
-from scipy.stats import triang
 
 
 def load_config(config_path="input/config.yaml"):
@@ -123,7 +121,6 @@ def calculate_distances(config_path="input/config.yaml", actual_railcars=None):
         d_tr_min = term * n_max * l_c + ((n - 1) / 2) * l_c + d_f + d_x + 0.5 * n_p * P
         d_tr_mean = 0.5 * l_c + d_f + d_x + 0.5 * n_p * P
         d_tr_max = n_max * l_c + d_f + d_x + 0.5 * n_p * P
-
 
     elif YARD_TYPE == 'perpendicular':
         d_h_min = n_t * P + 1.5 * n_p * P

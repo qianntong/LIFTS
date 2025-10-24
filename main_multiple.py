@@ -87,22 +87,13 @@ def run_single_simulation(params: Dict, run_id: int) -> Dict:
 
 def collect_results(state, params: Dict, run_id: int) -> Dict:
     """
-    Collect and aggregate simulation results
-
-    Args:
-        state: Global state object from simulation
-        params: Simulation parameters
-        run_id: Run number
-
-    Returns:
-        Dict: Aggregated results including:
-              - avg_ic_processing_time: Average IC processing time (hours)
-              - avg_oc_processing_time: Average OC processing time (hours)
-              - total_containers: Total number of containers processed
-              - train_delays: Average train delay time
+    Dict: Aggregated results including:
+          - avg_ic_processing_time: Average IC processing time (hours)
+          - avg_oc_processing_time: Average OC processing time (hours)
+          - total_containers: Total number of containers processed
+          - train_delays: Average train delay time
     """
     try:
-        # Extract container events
         container_events = state.container_events
 
         if not container_events:
@@ -198,13 +189,10 @@ def run_batch_simulations(param_dict: Dict = None,
                           max_runs: int = None,
                           resume_from: int = None) -> pd.DataFrame:
     """
-    Run batch simulations with all parameter combinations
-
     Args:
         param_dict: Parameter dictionary (uses SIMULATION_PARAMS if None)
         max_runs: Maximum number of runs (runs all if None)
         resume_from: Resume from specific run number (starts from 1 if None)
-
     Returns:
         pd.DataFrame: Results dataframe
     """
@@ -279,13 +267,6 @@ def run_batch_simulations(param_dict: Dict = None,
 
 
 def save_results(results_df: pd.DataFrame, suffix: str = ''):
-    """
-    Save results to Excel file with multiple sheets
-
-    Args:
-        results_df: Results dataframe
-        suffix: Filename suffix (e.g., '_intermediate')
-    """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -309,15 +290,6 @@ def save_results(results_df: pd.DataFrame, suffix: str = ''):
 
 
 def generate_summary_statistics(results_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Generate summary statistics from results
-
-    Args:
-        results_df: Results dataframe
-
-    Returns:
-        pd.DataFrame: Summary statistics
-    """
     successful_runs = results_df[results_df['status'] == 'success']
 
     if successful_runs.empty:
@@ -343,22 +315,18 @@ def generate_summary_statistics(results_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
-    """
-    Main entry point for batch simulation
-    """
     print("\n" + "=" * 70)
     print("INTERMODAL TERMINAL SIMULATION (MULTIPLE TRACK) - BATCH RUNNER")
     print("=" * 70 + "\n")
 
-    # Option 1: Run all combinations (WARNING: This could take hours!)
+    # # Option 1: Run all combinations
+    # print("    Running in ALL COMBO")
     # results_df = run_batch_simulations()
 
     # # Option 2: Run limited number for testing
     print("    Running in TEST MODE (first 10 combinations)")
-    print("    To run all combinations, modify main() function\n")
     results_df = run_batch_simulations(max_runs=10)
 
-    # Save results
     output_file = save_results(results_df)
 
     # Display summary

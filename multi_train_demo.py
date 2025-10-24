@@ -2,9 +2,19 @@ import random
 from distance import *
 from vehicle import *
 import yaml
-import numpy as np
-import polars as pl
 from decouple import *
+from typing import Optional
+import polars as pl
+
+emission_records = pl.DataFrame(
+    schema={
+        "type": pl.Utf8,
+        "id": pl.Utf8,
+        "emission": pl.Float64,
+        "travel_time": pl.Float64,
+        "time": pl.Float64,
+    }
+)
 
 class Terminal:
     def __init__(self, env, config):
@@ -14,6 +24,9 @@ class Terminal:
         yard_cfg = config["yard"]
         term_cfg = config["terminal"]
         gate_cfg = config["gates"]
+        ems_cfg = config["emissions"]
+
+        self.ems = ems_cfg
 
         self.yard_type = yard_cfg.get("yard_type", "parallel")
         self.track_number = int(yard_cfg.get("track_number", 2))
@@ -21,6 +34,7 @@ class Terminal:
         self.railcar_length = float(yard_cfg.get("railcar_length", 60))
         self.d_f = float(yard_cfg.get("d_f", 15))
         self.d_x = float(yard_cfg.get("d_x", 15))
+
 
         self.cranes_per_track = int(term_cfg.get("cranes_per_track", 2))
         self.hostler_number = int(term_cfg.get("hostler_number", 10))
@@ -151,7 +165,7 @@ def generate_timetable(config):
 
 
 def record_container_event(container, event_type, timestamp):
-    global state
+    global zstate
     if type(container) is str:
         container_string = container
     else:
@@ -160,6 +174,69 @@ def record_container_event(container, event_type, timestamp):
     if container_string not in state.container_events:
         state.container_events[container_string] = {}
     state.container_events[container_string][event_type] = timestamp
+
+
+def emission_calculation(terminal, status: str, move: str, vehicle: str, energy_type: str, travel_time: float) -> float:
+    ems = terminal.ems
+
+    move = move.lower()
+    status = status.lower()
+    vehicle = vehicle.lower()
+    energy_type = energy_type.capitalize()
+
+    # --- load consumption (unit: per lift)
+    if move == "load":
+        key = "crane_loaded" if status == "loaded" else "crane_idle"
+        emission_unit = ems["load_consumption"][key][energy_type]
+        emissions = emission_unit
+
+    # --- trip consumption (unit: hr × travel_time)
+    elif move == "trip":
+        key = f"{vehicle}_{status}"  # e.g. hostler_loaded / truck_empty
+        emission_unit = ems["trip_consumption"][key][energy_type]
+        emissions = emission_unit * travel_time
+
+    # --- side pick consumption (unit: per lift)
+    elif move == "side":
+        emission_unit = ems["side_pick_consumption"]["side"][energy_type]
+        emissions = emission_unit
+
+    else:
+        raise ValueError(f"Unsupported move type '{move}' for vehicle '{vehicle}'.")
+
+    return emissions
+
+
+
+def record_emission(vehicle_type: str, resource_id: str, emission_value: float, travel_time: float,env_now: Optional[float] = None) -> pl.DataFrame:
+    global emission_records
+    vehicle_type = vehicle_type.lower()
+    time_value = float(env_now) if env_now is not None else None
+
+    new_row = pl.DataFrame({
+        "type": [vehicle_type],
+        "id": [resource_id],
+        "emission": [emission_value],
+        "travel_time": [travel_time],
+        "time": [time_value],
+    })
+
+    emission_records = pl.concat([emission_records, new_row], how="vertical")
+    return emission_records
+
+
+def save_emission_results(emission_records: pl.DataFrame, out_path: Path, filetype: str = "csv"):
+    if out_path is None:
+        return
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if filetype == "csv":
+        emission_records.write_csv(out_path)
+    elif filetype == "xlsx":
+        emission_records.to_pandas().to_excel(out_path, index=False)
+    else:
+        raise ValueError("filetype must be 'csv' or 'xlsx'")
 
 
 def truck_entry(env, terminal, truck, oc, train_schedule):
@@ -246,10 +323,14 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
 
             ic = yield terminal.train_ic_stores.get(lambda x: x.train_id == train_id)
             crane_unload_time = state.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, state.CRANE_MOVE_DEV_TIME)
+            crane_unload_ems = emission_calculation(terminal, "loaded", "load", "crane", "Diesel", travel_time=crane_unload_time)
+
             yield env.timeout(crane_unload_time)
             yield terminal.chassis.put(ic)
             # record_container_event(ic.to_string(), f"crane_unload_by_{crane}", env.now)
             record_container_event(ic.to_string(), f"crane_unload", env.now)
+            record_emission(vehicle_type="crane", resource_id=str(crane.id), emission_value=crane_unload_ems,travel_time=crane_unload_time, env_now=env.now)
+
             env.process(container_process(env, terminal, train_schedule))
 
         yield terminal.cranes_by_track[track_id].put(crane)
@@ -616,7 +697,7 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
     )
     if out_path is not None:
         container_data.write_excel(out_path / f"multiple_trains_track_{num_tracks}_crane_{state.CRANE_NUMBER}_hostler_{state.HOSTLER_NUMBER}_simulation_results.xlsx")
-
+        save_emission_results(emission_records, out_path / f"multiple_trains_track_{num_tracks}_crane_{state.CRANE_NUMBER}_hostler_{state.HOSTLER_NUMBER}_emission_results.xlsx",filetype="xlsx")
     print("Simulation completed. ")
     return None
 
@@ -628,4 +709,4 @@ if __name__ == "__main__":
         out_path=utilities.package_root() / 'output' / 'double_track_results'
     )
 
-    print("Train processing time:", state.time_per_train)
+    # print("Train processing time:", state.time_per_train)
