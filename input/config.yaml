@@ -1,7 +1,9 @@
 simulation:
-  length: 24               # total simulation time (hours)
-  train_number: 2          # number of trains in the simulation
-  train_batch_size: 100     # full_cars = oc_number = truck_number
+  length: 168                 # total simulation time (hours): default 7 days (168 hours)
+  analyze_start: 72          # analyzing start time (hours): default from day 3 (hour 72)
+  analyze_end: 120        # analyzing end time (hours): default to day 5 (hour 120)
+  train_number: 10            # number of trains in the simulation
+  train_batch_size: 100       # full_cars = oc_number = truck_number
 
 yard:
   yard_type: parallel
@@ -22,7 +24,7 @@ gates:
 
 layout:
   file_path: "input/layout.xlsx"   # yard geometry file
-  mode: fixed                      # 'fixed' or 'adaptive'
+  mode: adaptive                   # 'fixed' or 'adaptive'
 
   # Note: if mode == 'fixed' (i.e. simulation for a specific yard), use default parameters below
   M: 5         # rows of parking blocks
