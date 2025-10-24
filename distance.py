@@ -4,6 +4,7 @@ import yaml
 import pandas as pd
 from pathlib import Path
 
+layout_static = pd.read_excel(Path("input/multiple_layout.xlsx"))
 
 def load_config(config_path="input/config.yaml"):
     with open(config_path, "r") as f:
@@ -25,7 +26,7 @@ def get_layout(config):
     if mode == "adaptive":
         layout_path = Path(layout_cfg["file_path"])
         batch_size = config["simulation"]["train_batch_size"]
-        df = pd.read_excel(layout_path)
+        df = layout_static #pd.read_excel(layout_path)
         capacity = batch_size * num_tracks * 2  # IC&OC for each track
         row = df.loc[df["train batch (k)"] == capacity]
         if row.empty:
@@ -54,13 +55,15 @@ def get_layout(config):
     return layout
 
 
-def calculate_distances(config_path="input/config.yaml", actual_railcars=None):
+def calculate_distances(config_path="input/config.yaml", config=None, actual_railcars=None):
     """Compute yard geometric distances.
        If actual_railcars is provided, compute track-level mu correction.
        Otherwise initialize with n=0 (idle state)."""
 
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
+    if (config is None) and (config_path is not None):
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+    # Otherwise: just the config that's passed in from the terminal object
 
     yard_cfg = config["yard"]
     layout_cfg = config["layout"]
@@ -68,7 +71,7 @@ def calculate_distances(config_path="input/config.yaml", actual_railcars=None):
     # --- layout (adaptive or fixed) ---
     mode = layout_cfg.get("mode", "adaptive").lower()
     if mode == "adaptive":
-        df = pd.read_excel(Path(layout_cfg["file_path"]))
+        df = layout_static#pd.read_excel(Path(layout_cfg["file_path"]))
         batch_size = config["simulation"]["train_batch_size"]
         row = df.loc[df["train batch (k)"] == batch_size]
         if row.empty:
@@ -174,8 +177,8 @@ def speed_density(avg_density, vehicle_type, N):
     return speed
 
 
-def simulate_truck_travel(truck_id, train_schedule, terminal, config_path="input/config.yaml"):
-    params = calculate_distances(config_path)
+def simulate_truck_travel(truck_id, train_schedule, terminal, config=None, config_path="input/config.yaml"):
+    params = calculate_distances(config = config, config_path = config_path)
     N = params["N"]
     total_lane_length = params["total_lane_length"]
     d_t_min, d_t_max = params["d_t_min"], params["d_t_max"]
@@ -188,8 +191,8 @@ def simulate_truck_travel(truck_id, train_schedule, terminal, config_path="input
     return truck_travel_time, d_t_dist, truck_speed, veh_density
 
 
-def simulate_hostler_travel(hostler_id, current_veh_num, config_path="input/config.yaml"):
-    params = calculate_distances(config_path)
+def simulate_hostler_travel(hostler_id, current_veh_num, config=None, config_path="input/config.yaml"):
+    params = calculate_distances(config = config, config_path = config_path)
     total_lane_length, N = params["total_lane_length"], params["N"]
     d_h_min, d_h_max = params["d_h_min"], params["d_h_max"]
 
@@ -200,8 +203,8 @@ def simulate_hostler_travel(hostler_id, current_veh_num, config_path="input/conf
     return hostler_travel_time, d_h_dist, hostler_speed, veh_density
 
 
-def simulate_reposition_travel(hostler_id, current_veh_num, config_path="input/config.yaml"):
-    params = calculate_distances(config_path)
+def simulate_reposition_travel(hostler_id, current_veh_num, config=None, config_path="input/config.yaml"):
+    params = calculate_distances(config = config, config_path = config_path)
     total_lane_length, N = params["total_lane_length"], params["N"]
     d_r_min, d_r_max = params["d_r_min"], params["d_r_max"]
 
@@ -225,8 +228,8 @@ def simulate_reposition_travel(hostler_id, current_veh_num, config_path="input/c
 #     return hostler_travel_time
 
 
-def simulate_hostler_track_travel(hostler_id, current_veh_num, config_path="input/config.yaml"):
-    params = calculate_distances(config_path)
+def simulate_hostler_track_travel(hostler_id, current_veh_num, config=None, config_path="input/config.yaml"):
+    params = calculate_distances(config = config, config_path = config_path)
     total_lane_length, N = params["total_lane_length"], params["N"]
     d_tr_min, d_tr_mean, d_tr_max = params["d_tr_min"], params["d_tr_mean"], params["d_tr_max"]
 

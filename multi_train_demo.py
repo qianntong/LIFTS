@@ -6,6 +6,8 @@ from decouple import *
 from typing import Optional
 import polars as pl
 
+# TODO: replace with
+# emission_records = []
 emission_records = pl.DataFrame(
     schema={
         "type": pl.Utf8,
@@ -221,6 +223,9 @@ def record_emission(vehicle_type: str, resource_id: str, emission_value: float, 
         "time": [time_value],
     })
 
+    # TODO: replace with list operation 
+    # example: emissions_records = emissions_records.append(new_row)
+    # Then at end of simulation: emission_records_df = pl.concat(emissions_records, how="diagonal_relaxed")
     emission_records = pl.concat([emission_records, new_row], how="vertical")
     return emission_records
 
@@ -406,7 +411,7 @@ def handle_oc(env, terminal, train_schedule):
     # hostler transport OC from paring slots
     assigned_hostler = yield get_hostler(terminal)
     oc = yield terminal.parking_slots.get(lambda x: (x.type == 'Outbound'))
-    hostler_reposition_travel_time, d_r_dist, hostler_speed, veh_density = simulate_reposition_travel(oc, env.now)
+    hostler_reposition_travel_time, d_r_dist, hostler_speed, veh_density = simulate_reposition_travel(oc, env.now, config=terminal.config)
     yield env.timeout(hostler_reposition_travel_time)
     # print(f"hostler_reposition_travel_time: {hostler_reposition_travel_time} hr")
     record_container_event(oc.to_string(), 'hostler_pickup', env.now)
@@ -417,7 +422,8 @@ def handle_oc(env, terminal, train_schedule):
 
     # transport OC from parking to chassis
     current_veh_num = len(terminal.parked_hostlers.items) + 1
-    hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = simulate_hostler_track_travel(assigned_hostler, current_veh_num)
+    hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = \
+        simulate_hostler_track_travel(assigned_hostler, current_veh_num, config=terminal.config)
     yield env.timeout(hostler_travel_time_to_chassis)
     yield terminal.chassis.put(oc)
     record_container_event(oc.to_string(), 'hostler_dropoff', env.now)
@@ -444,13 +450,15 @@ def container_process(env, terminal, train_schedule):
 
     # 2. hostler travel time 1: the empty hostler pick up the IC
     current_veh_num =  len(terminal.parked_hostlers.items) + 1
-    hostler_travel_time_to_track, hostler_dist, hostler_speed, hostler_density = simulate_hostler_track_travel(assigned_hostler, current_veh_num)
+    hostler_travel_time_to_track, hostler_dist, hostler_speed, hostler_density = \
+        simulate_hostler_track_travel(assigned_hostler, current_veh_num, config=terminal.config)
     yield env.timeout(hostler_travel_time_to_track)
     # print(f"[DEBUG]: {assigned_hostler} picks up {ic} at {env.now:.3f}.")
 
     # 3. hostler travel time 2: the loaded hostler going to drop off the IC
     current_veh_num = len(terminal.parked_hostlers.items) + 1
-    hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_track_travel(assigned_hostler, current_veh_num)
+    hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = \
+        simulate_hostler_track_travel(assigned_hostler, current_veh_num, config=terminal.config)
     yield env.timeout(hostler_travel_time_to_parking)
     terminal.parking_slots.put(ic)
     record_container_event(ic.to_string(), 'hostler_pickup', env.now)
@@ -465,7 +473,8 @@ def container_process(env, terminal, train_schedule):
 
     # 4. Assign a truck to pick up IC
     assigned_truck = yield terminal.truck_store.get()
-    truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = simulate_truck_travel(assigned_truck, train_schedule, terminal)
+    truck_travel_time, truck_dist, truck_avg_speed, truck_avg_density = \
+        simulate_truck_travel(assigned_truck, train_schedule, terminal, config=terminal.config)
     yield env.timeout(truck_travel_time)
     ic = yield terminal.parking_slots.get(lambda x: x.type == 'Inbound')
     record_container_event(ic.to_string(), 'truck_pickup', env.now)
@@ -496,12 +505,14 @@ def handle_remaining_oc(env, terminal, train_schedule):
 
         # 3) assign hostler
         current_veh_num = len(terminal.parked_hostlers.items) + 1
-        hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
+        hostler_travel_time_to_parking, hostler_dist, hostler_speed, hostler_density = \
+            simulate_hostler_travel(assigned_hostler, current_veh_num, config=terminal.config)
         yield env.timeout(hostler_travel_time_to_parking)
         # print(f"[DEBUG]: {assigned_hostler} picks up remaining {oc} at {env.now:.3f}.")
 
         # 4) hostler loaded with an OC -> chassis
-        hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = simulate_hostler_travel(assigned_hostler, current_veh_num)
+        hostler_travel_time_to_chassis, hostler_dist, hostler_speed, hostler_density = \
+            simulate_hostler_travel(assigned_hostler, current_veh_num, config=terminal.config)
         yield env.timeout(hostler_travel_time_to_chassis)
         yield terminal.chassis.put(oc)
         record_container_event(oc.to_string(), 'hostler_dropoff', env.now)
