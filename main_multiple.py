@@ -10,6 +10,7 @@ import polars as pl
 import sys
 import shutil
 import multi_train_demo as sim
+from main import train_batch_size
 
 SIMULATION_PARAMS = {
     'track_number': [2, 3],             # Number of tracks => [2, 3, 4, 5]
@@ -85,13 +86,19 @@ def run_single_simulation(params: Dict, run_id: int) -> Dict:
         }
 
 
-def collect_results(state, params: Dict, run_id: int) -> Dict:
+def collect_results(state, params: Dict, run_id: int, analyze_start: float = None, analyze_end: float = None) -> Dict:
     """
-    Dict: Aggregated results including:
-          - avg_ic_processing_time: Average IC processing time (hours)
-          - avg_oc_processing_time: Average OC processing time (hours)
-          - total_containers: Total number of containers processed
-          - train_delays: Average train delay time
+    Collect and analyze simulation results with detailed statistics.
+
+    Args:
+        state: Simulation state object
+        params: Parameter dictionary
+        run_id: Run identifier
+        analyze_start: Start time for analysis window (hours)
+        analyze_end: End time for analysis window (hours)
+
+    Returns:
+        Dict: Comprehensive results including means, mins, maxs, and standard deviations
     """
     try:
         container_events = state.container_events
@@ -102,74 +109,185 @@ def collect_results(state, params: Dict, run_id: int) -> Dict:
                 'run_id': run_id,
                 'status': 'no_data',
                 **params,
-                'avg_ic_processing_time': None,
-                'avg_oc_processing_time': None,
-                'total_containers': 0,
-                'avg_train_delay': 0
+                'analyze_start': analyze_start,
+                'analyze_end': analyze_end,
             }
 
-        # Calculate IC processing times
-        ic_times = []
-        oc_times = []
-
+        # Convert container events to DataFrame for easier processing
+        container_records = []
         for container_id, events in container_events.items():
-            # IC processing time: from train arrival to truck exit
+            record = {'container_id': container_id, **events}
+
+            # Determine container type
             if 'IC-' in container_id:
-                if 'train_arrival_expected' in events and 'truck_exit' in events:
-                    ic_time = events['truck_exit'] - events['train_arrival_expected']
-                    ic_times.append(ic_time)
-
-            # OC processing time: from truck arrival to crane load
+                record['type'] = 'IC'
             elif 'OC-' in container_id:
-                if 'truck_arrival' in events and 'crane_load' in events:
-                    oc_time = events['crane_load'] - events['truck_arrival']
-                    oc_times.append(oc_time)
+                record['type'] = 'OC'
+            else:
+                continue
 
-        # Calculate averages
-        avg_ic_time = np.mean(ic_times) if ic_times else None
-        avg_oc_time = np.mean(oc_times) if oc_times else None
+            container_records.append(record)
 
-        # Calculate train delay statistics
-        train_delays = []
-        if hasattr(state, 'train_delay_time'):
-            train_delays = list(state.train_delay_time.values())
+        if not container_records:
+            print(f"    No valid container records for run {run_id}")
+            return {
+                'run_id': run_id,
+                'status': 'no_data',
+                **params,
+            }
 
-        avg_delay = np.mean(train_delays) if train_delays else 0
+        df = pd.DataFrame(container_records)
 
-        # Calculate train processing times
+        # Apply time window filter if specified
+        if analyze_start is not None and analyze_end is not None:
+            # Filter IC containers by train arrival time
+            ic_mask = (df['type'] == 'IC') & (df['train_arrival_expected'].notna())
+            df.loc[ic_mask, 'in_window'] = (
+                    (df.loc[ic_mask, 'train_arrival_expected'] >= analyze_start) &
+                    (df.loc[ic_mask, 'train_arrival_expected'] <= analyze_end)
+            )
+
+            # Filter OC containers by truck arrival time
+            oc_mask = (df['type'] == 'OC') & (df['truck_arrival'].notna())
+            df.loc[oc_mask, 'in_window'] = (
+                    (df.loc[oc_mask, 'truck_arrival'] >= analyze_start) &
+                    (df.loc[oc_mask, 'truck_arrival'] <= analyze_end)
+            )
+
+            df = df[df['in_window'] == True].copy()
+
+        # ============ IC Container Processing ============
+        ic_df = df[df['type'] == 'IC'].copy()
+
+        # IC Processing Time: train_arrival_expected -> truck_exit
+        ic_df['ic_processing_time'] = ic_df['truck_exit'] - ic_df['train_arrival_expected']
+        ic_processing_valid = ic_df['ic_processing_time'].dropna()
+
+        # IC Delay Time: train_arrival - train_arrival_expected
+        ic_df['ic_delay_time'] = ic_df['train_arrival'] - ic_df['train_arrival_expected']
+        ic_delay_valid = ic_df['ic_delay_time'].dropna()
+
+        # ============ OC Container Processing ============
+        oc_df = df[df['type'] == 'OC'].copy()
+
+        # Calculate first OC pickup time per train
+        if 'train_depart' in oc_df.columns and 'hostler_pickup' in oc_df.columns:
+            first_pickup_per_train = (
+                oc_df.groupby('train_depart')['hostler_pickup']
+                .min()
+                .reset_index()
+                .rename(columns={'hostler_pickup': 'first_oc_pickup_time'})
+            )
+
+            # Merge back to oc_df
+            oc_df = oc_df.merge(first_pickup_per_train, on='train_depart', how='left')
+
+            # OC Delay Time: train_depart - first_oc_pickup_time
+            oc_df['oc_delay_time'] = oc_df['train_depart'] - oc_df['first_oc_pickup_time']
+            oc_delay_valid = oc_df['oc_delay_time'].dropna()
+        else:
+            oc_delay_valid = pd.Series(dtype=float)
+
+        # OC Processing Time: truck_arrival -> crane_load
+        oc_df['oc_processing_time'] = oc_df['crane_load'] - oc_df['truck_arrival']
+        oc_processing_valid = oc_df['oc_processing_time'].dropna()
+
+        # ============ Train-level Statistics ============
         train_times = []
+        train_delays = []
+
         if hasattr(state, 'time_per_train'):
-            train_times = list(state.time_per_train.values())
+            for train_id, proc_time in state.time_per_train.items():
+                # Apply time filter if train_arrival_times exists
+                if hasattr(state, 'train_arrival_times') and train_id in state.train_arrival_times:
+                    arrival_time = state.train_arrival_times[train_id]
+                    if analyze_start is not None and analyze_end is not None:
+                        if not (analyze_start <= arrival_time <= analyze_end):
+                            continue
+                train_times.append(proc_time)
 
-        avg_train_time = np.mean(train_times) if train_times else None
+        if hasattr(state, 'train_delay_time'):
+            for train_id, delay in state.train_delay_time.items():
+                if hasattr(state, 'train_arrival_times') and train_id in state.train_arrival_times:
+                    arrival_time = state.train_arrival_times[train_id]
+                    if analyze_start is not None and analyze_end is not None:
+                        if not (analyze_start <= arrival_time <= analyze_end):
+                            continue
+                train_delays.append(delay)
 
-        return {
+        # ============ Helper Function for Statistics ============
+        def calc_stats(series, prefix):
+            """Calculate mean, min, max, std for a series"""
+            if len(series) == 0:
+                return {
+                    f'{prefix}_mean': None,
+                    f'{prefix}_min': None,
+                    f'{prefix}_max': None,
+                    f'{prefix}_std': None,
+                    f'{prefix}_count': 0
+                }
+            return {
+                f'{prefix}_mean': round(series.mean(), 4),
+                f'{prefix}_min': round(series.min(), 4),
+                f'{prefix}_max': round(series.max(), 4),
+                f'{prefix}_std': round(series.std(), 4),
+                f'{prefix}_count': len(series)
+            }
+
+        # ============ Compile Results ============
+        results = {
             'run_id': run_id,
             'status': 'success',
             **params,
-            'avg_ic_processing_time': round(avg_ic_time, 4) if avg_ic_time else None,
-            'avg_oc_processing_time': round(avg_oc_time, 4) if avg_oc_time else None,
-            'total_ic_containers': len(ic_times),
-            'total_oc_containers': len(oc_times),
-            'total_containers': len(ic_times) + len(oc_times),
-            'avg_train_delay': round(avg_delay, 4),
-            'avg_train_processing_time': round(avg_train_time, 4) if avg_train_time else None,
-            'num_trains_processed': len(train_times)
+            'analyze_start': analyze_start,
+            'analyze_end': analyze_end,
+
+            # IC Processing Time Statistics
+            **calc_stats(ic_processing_valid, 'ic_processing_time'),
+
+            # IC Delay Time Statistics
+            **calc_stats(ic_delay_valid, 'ic_delay_time'),
+
+            # OC Processing Time Statistics
+            **calc_stats(oc_processing_valid, 'oc_processing_time'),
+
+            # OC Delay Time Statistics
+            **calc_stats(oc_delay_valid, 'oc_delay_time'),
+
+            # Train Processing Time Statistics
+            **calc_stats(pd.Series(train_times), 'train_processing_time'),
+
+            # Train Delay Statistics
+            **calc_stats(pd.Series(train_delays), 'train_delay'),
+
+            # Container Counts
+            'total_ic_containers': len(ic_df),
+            'total_oc_containers': len(oc_df),
+            'total_containers': len(df),
+
+            # Train Counts
+            'num_trains_processed': len(train_times),
+            'num_trains_delayed': len(train_delays),
         }
 
+        # Add backward compatibility (keeping old field names)
+        results['avg_ic_processing_time'] = results['ic_processing_time_mean']
+        results['avg_ic_delay_time'] = results['ic_delay_time_mean']
+        results['avg_oc_processing_time'] = results['oc_processing_time_mean']
+        results['avg_oc_delay_time'] = results['oc_delay_time_mean']
+        results['avg_train_processing_time'] = results['train_processing_time_mean']
+
+        return results
+
     except Exception as e:
-        print(f"Error collecting results for run {run_id}: {e}")
+        print(f"    Error in collect_results for run {run_id}: {str(e)}")
         import traceback
         traceback.print_exc()
-
         return {
             'run_id': run_id,
-            'status': 'collection_failed',
-            'error': str(e),
+            'status': 'error',
             **params,
-            'avg_ic_processing_time': None,
-            'avg_oc_processing_time': None,
-            'total_containers': 0
+            'error': str(e)
         }
 
 
@@ -185,9 +303,7 @@ def generate_param_combinations(param_dict: Dict) -> List[Dict]:
     return combinations
 
 
-def run_batch_simulations(param_dict: Dict = None,
-                          max_runs: int = None,
-                          resume_from: int = None) -> pd.DataFrame:
+def run_batch_simulations(param_dict: Dict = None, max_runs: int = None, resume_from: int = None) -> pd.DataFrame:
     """
     Args:
         param_dict: Parameter dictionary (uses SIMULATION_PARAMS if None)
@@ -324,8 +440,8 @@ def main():
     # results_df = run_batch_simulations()
 
     # # Option 2: Run limited number for testing
-    print("    Running in TEST MODE (first 10 combinations)")
-    results_df = run_batch_simulations(max_runs=10)
+    print("    Running in TEST MODE (first 2 combinations)")
+    results_df = run_batch_simulations(max_runs=2)
 
     output_file = save_results(results_df)
 

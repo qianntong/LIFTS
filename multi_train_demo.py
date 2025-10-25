@@ -6,17 +6,7 @@ from decouple import *
 from typing import Optional
 import polars as pl
 
-# TODO: replace with
-# emission_records = []
-emission_records = pl.DataFrame(
-    schema={
-        "type": pl.Utf8,
-        "id": pl.Utf8,
-        "emission": pl.Float64,
-        "travel_time": pl.Float64,
-        "time": pl.Float64,
-    }
-)
+emission_records = []
 
 class Terminal:
     def __init__(self, env, config):
@@ -209,25 +199,19 @@ def emission_calculation(terminal, status: str, move: str, vehicle: str, energy_
     return emissions
 
 
-
-def record_emission(vehicle_type: str, resource_id: str, emission_value: float, travel_time: float,env_now: Optional[float] = None) -> pl.DataFrame:
-    global emission_records
-    vehicle_type = vehicle_type.lower()
-    time_value = float(env_now) if env_now is not None else None
-
-    new_row = pl.DataFrame({
-        "type": [vehicle_type],
-        "id": [resource_id],
-        "emission": [emission_value],
-        "travel_time": [travel_time],
-        "time": [time_value],
+def record_emission(emission_records: list, vehicle_type: str, resource_id: str, track_id: str, train_id: str, container_id: str, event_type: str, zone: str, emission_value: float, travel_time: float, env_now: float) -> None:
+    emission_records.append({
+        "resource_type": vehicle_type.lower(),
+        "resource_id": str(resource_id),
+        "track_id":str(track_id),
+        "train_id": str(train_id),
+        "container_id": str(container_id),
+        "event_type": event_type,
+        "zone": zone,
+        "energy_consumption(gal)": float(emission_value),
+        "load/travel_time(hr)": float(travel_time),
+        "record_timestamp": float(env_now),
     })
-
-    # TODO: replace with list operation 
-    # example: emissions_records = emissions_records.append(new_row)
-    # Then at end of simulation: emission_records_df = pl.concat(emissions_records, how="diagonal_relaxed")
-    emission_records = pl.concat([emission_records, new_row], how="vertical")
-    return emission_records
 
 
 def save_emission_results(emission_records: pl.DataFrame, out_path: Path, filetype: str = "csv"):
@@ -334,8 +318,7 @@ def crane_unload_process(env, terminal, train_schedule, track_id):
             yield terminal.chassis.put(ic)
             # record_container_event(ic.to_string(), f"crane_unload_by_{crane}", env.now)
             record_container_event(ic.to_string(), f"crane_unload", env.now)
-            record_emission(vehicle_type="crane", resource_id=str(crane.id), emission_value=crane_unload_ems,travel_time=crane_unload_time, env_now=env.now)
-
+            record_emission(emission_records, "crane", str(crane.id), str(track_id), str(train_id), str(ic), "unload", "train_side", crane_unload_ems, crane_unload_time, env.now)
             env.process(container_process(env, terminal, train_schedule))
 
         yield terminal.cranes_by_track[track_id].put(crane)
@@ -706,9 +689,13 @@ def run_simulation(train_consist_plan: pl.DataFrame, terminal: str, out_path=Non
         .sort("container_id")
         .select(pl.col("container_id"), pl.exclude("container_id"))
     )
+
+    # emission_records_df = pl.concat(emission_records, how="diagonal_relaxed")
+    emission_records_df = pl.DataFrame(emission_records)
+
     if out_path is not None:
         container_data.write_excel(out_path / f"multiple_trains_track_{num_tracks}_crane_{state.CRANE_NUMBER}_hostler_{state.HOSTLER_NUMBER}_simulation_results.xlsx")
-        save_emission_results(emission_records, out_path / f"multiple_trains_track_{num_tracks}_crane_{state.CRANE_NUMBER}_hostler_{state.HOSTLER_NUMBER}_emission_results.xlsx",filetype="xlsx")
+        save_emission_results(emission_records_df, out_path / f"multiple_trains_track_{num_tracks}_crane_{state.CRANE_NUMBER}_hostler_{state.HOSTLER_NUMBER}_emission_results.xlsx", filetype="xlsx")
     print("Simulation completed. ")
     return None
 
