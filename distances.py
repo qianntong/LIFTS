@@ -21,10 +21,9 @@ def load_layout_config_from_json(path="input/sim_config.json"):
 
 # Yard setting: optimal layout output
 YARD_TYPE = 'parallel'  # choose 'perpendicular' or 'parallel'
-
 load_layout_config_from_json()
 
-# Yard setting: optimal layout output
+# # Yard setting: optimal layout output
 YARD_TYPE = 'parallel'  # choose 'perpendicular' or 'parallel'
 k = 20 # train batch size
 M = 2 # decide the number of rows of parking blocks in the layout

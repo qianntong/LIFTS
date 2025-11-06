@@ -24,10 +24,10 @@ def get_layout(config):
     mode = layout_cfg.get("mode", "fixed").lower()
 
     if mode == "adaptive":
-        layout_path = Path(layout_cfg["file_path"])
+        Path(layout_cfg["file_path"])
         batch_size = config["simulation"]["train_batch_size"]
         df = layout_static #pd.read_excel(layout_path)
-        capacity = batch_size * num_tracks * 2  # IC&OC for each track
+        capacity = batch_size * num_tracks * 2  # IC & OC for each track, multiple tracks
         row = df.loc[df["train batch (k)"] == capacity]
         if row.empty:
             raise ValueError(f"No layout found for train batch size {batch_size} corresponding capacity {capacity}")
