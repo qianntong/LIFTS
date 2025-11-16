@@ -115,11 +115,11 @@ def simulate_hostler_track_travel(hostler_id, current_veh_num, total_lane_length
     '''
     global state
 
-    c = 3.28 * (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)  # standardization
+    c = (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)  # standardization
     d_tr_dist = triang(c, loc=d_tr_min, scale=d_tr_max - d_tr_min).rvs()
     veh_density = current_veh_num / total_lane_length
     hostler_speed = speed_density(veh_density, 'hostler')
-    hostler_travel_time = (d_tr_dist) / (2 * hostler_speed * 3600)
+    hostler_travel_time = (d_tr_dist) / (hostler_speed * 3600)
 
     return hostler_travel_time
 

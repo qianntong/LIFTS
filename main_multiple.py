@@ -12,22 +12,38 @@ import shutil
 import multi_train_demo as sim
 import traceback
 
+"""
+Simulation parameters:
+1. Number of tracks => [2, 3, 4, 5]
+2. Cranes per track => [2, 3, 4]
+3. Number of hostlers => [12, 24, 36]
+4. Batch size: 20, 40, 60, ..., 200 => list(range(20, 201, 20))
+5. Number of trains: 1, 2, 3, ..., 10
 
+Simulation running:
+SIMUL_OPTION: option 1: Run all combinations; option 2: Run limited number for testing
+MAX_RUN_FOR_TEST: int input - if option 2, specify how many cases to test
+"""
 SIMULATION_PARAMS = {
-    'track_number': [1, 2, 3, 4, 5],             # Number of tracks => [2, 3, 4, 5]
-    'cranes_per_track': [2],                     # Cranes per track => [2, 3, 4]
-    'hostler_number': [12],                      # Number of hostlers => [12, 24, 36]
-    'train_batch_size': [20],                    # Batch size: 20, 40, 60, ..., 200 => list(range(20, 201, 20))
-    'train_number': list(range(1, 21))           # Number of trains: 1, 2, 3, ..., 10
+    'track_number': [2],
+    'cranes_per_track': [2],
+    'hostler_number': [6, 12],
+    'train_batch_size': [100],
+    'train_number': list(range(10, 51, 10))
 }
 
-SIMUL_OPTION = 1            # int input - option 1: Run all combinations; option 2: Run limited number for testing
-MAX_RUN_FOR_TEST = 3        # int input - if option 2, specify how many cases to test
+SIMUL_OPTION = 1
+MAX_RUN_FOR_TEST = 3
+
+
+"""
+Please don't change any logic/codes below!!!!
+Note: IC Delay Time = OC Delay Time
+"""
 
 CONFIG_PATH = Path("input/config.yaml")
 OUTPUT_DIR = Path("output/batch_results")
 BACKUP_DIR = Path("input/config_backup")
-
 
 def generate_param_combinations(param_dict: Dict) -> List[Dict]:
     keys = list(param_dict.keys())
@@ -105,11 +121,14 @@ def collect_results(container_data, updated_config: Dict, params: Dict, run_id: 
         else:
             print(f"    No time window filter applied - using all containers")
 
-        #   IC Container Processing & Delay Time
+        # --- IC Processing & Delay Time ---
         ic_df = df[df['type'] == 'IC'].copy()
+
+        # IC Processing Time
         ic_df['ic_processing_time'] = ic_df['truck_exit'] - ic_df['train_arrival_actual']
         ic_processing_valid = ic_df['ic_processing_time'].dropna()
 
+        # IC Delay Time
         if 'train_arrival_actual' in ic_df.columns:
             ic_df['ic_delay_time'] = ic_df['train_arrival_actual'] - ic_df['train_arrival_expected']
             ic_delay_valid = ic_df['ic_delay_time'].dropna()
@@ -119,42 +138,30 @@ def collect_results(container_data, updated_config: Dict, params: Dict, run_id: 
 
         print(f"    IC containers: {len(ic_df)} | proc_valid={len(ic_processing_valid)} | delay_valid={len(ic_delay_valid)}")
 
-        # OC Container Processing
+        # --- OC Processing & Delay Time ---
         oc_df = df[df['type'] == 'OC'].copy()
 
-        if {'train_depart', 'hostler_pickup'}.issubset(oc_df.columns):
-            oc_df['oc_processing_time'] = oc_df['train_depart'] - (oc_df['hostler_pickup'] + oc_df['pre_staging_time'])
+        # OC Processing Time
+        if {'train_depart', 'train_arrival_actual_oc'}.issubset(oc_df.columns):
+            oc_df['oc_processing_time'] = oc_df['train_depart'] - oc_df['train_arrival_actual_oc']
             oc_processing_valid = oc_df['oc_processing_time'].dropna()
             print(f"OC processing time calculated for {len(oc_processing_valid)} containers")
         else:
             oc_processing_valid = pd.Series(dtype=float)
-            missing_cols = {'train_depart', 'hostler_pickup'} - set(oc_df.columns)
+            missing_cols = {'train_depart', 'train_arrival_actual_oc'} - set(oc_df.columns)
             print(f"Missing {missing_cols} for OC processing time calculation")
 
-        # --- OC Delay Time ---
-        if {'first_oc_pickup_time', 'train_depart', 'first_pickup_oc_pre_staging_time'}.issubset(oc_df.columns):
-            valid_mask = oc_df['first_oc_pickup_time'].notna() & oc_df['train_depart'].notna() & oc_df['first_pickup_oc_pre_staging_time'].notna()
-            oc_df.loc[valid_mask, 'oc_delay_time'] = (
-                    oc_df.loc[valid_mask, 'train_depart']
-                    - (oc_df.loc[valid_mask, 'first_oc_pickup_time'] + oc_df.loc[valid_mask, 'first_pickup_oc_pre_staging_time'])
-            )
+        # OC Delay Time
+        if {'train_arrival_actual_oc', 'train_arrival_expected_oc'}.issubset(oc_df.columns):
+            oc_df['oc_delay_time'] = oc_df['train_arrival_actual_oc'] - oc_df['train_arrival_expected_oc']
             oc_delay_valid = oc_df['oc_delay_time'].dropna()
             print(f"OC delay time calculated for {len(oc_delay_valid)} containers")
         else:
             oc_delay_valid = pd.Series(dtype=float)
-            missing_cols = {'first_oc_pickup_time', 'train_depart', 'pre_staging_time'} - set(oc_df.columns)
+            missing_cols = {'train_arrival_actual_oc', 'train_arrival_expected_oc'} - set(oc_df.columns)
             print(f"Missing {missing_cols} for OC delay time calculation")
-        # if {'first_oc_pickup_time', 'pre_staging_time', 'train_depart'}.issubset(oc_df.columns):
-        #     valid_mask = oc_df['first_oc_pickup_time'].notna() & oc_df['train_depart'].notna()
-        #     oc_df.loc[valid_mask, 'oc_delay_time'] = (oc_df.loc[valid_mask, 'train_depart'] - (oc_df.loc[valid_mask, 'first_oc_pickup_time'] + oc_df.loc[valid_mask, 'pre_staging_time']))
-        #     oc_delay_valid = oc_df['oc_delay_time'].dropna()
-        #     print(f"OC delay time calculated for {len(oc_delay_valid)} containers")
-        # else:
-        #     oc_delay_valid = pd.Series(dtype=float)
-        #     missing_cols = {'first_oc_pickup_time', 'train_depart'} - set(oc_df.columns)
-        #     print(f"Missing {missing_cols} for OC delay time calculation")
 
-        print(f"    OC containers: {len(oc_df)} | proc_valid={len(oc_processing_valid)} | delay_valid={len(oc_delay_valid)}")
+        print(f"OC containers: {len(oc_df)} | proc_valid={len(oc_processing_valid)} | delay_valid={len(oc_delay_valid)}")
 
         # ============ Results Statistics ============
         def calc_stats(series, prefix):

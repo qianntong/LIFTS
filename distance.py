@@ -16,7 +16,7 @@ def get_layout(config):
     """
     Return layout parameters, supporting two modes:
       - fixed: use layout values directly from YAML
-      - adaptive: load layout from Excel based on train batch size
+      - adaptive: load layout from Excel based on given train batch size
     """
     layout_cfg = config["layout"]
     yard_cfg = config["yard"]
@@ -27,7 +27,7 @@ def get_layout(config):
         Path(layout_cfg["file_path"])
         batch_size = config["simulation"]["train_batch_size"]
         df = layout_static #pd.read_excel(layout_path)
-        capacity = batch_size * num_tracks * 2  # IC & OC for each track, multiple tracks
+        capacity = batch_size * num_tracks * 2  # fixed train length, multiple tracks & IC & OC for each track
         row = df.loc[df["train batch (k)"] == capacity]
         if row.empty:
             raise ValueError(f"No layout found for train batch size {batch_size} corresponding capacity {capacity}")
@@ -38,7 +38,7 @@ def get_layout(config):
             "n_t": int(row["trainlanes (n_t)"]),
             "n_p": int(row["parknglanes (n_p)"]),
             "n_r": int(row["blocklen (n_r)"]),
-            "P": int(layout_cfg.get("P", 10)),
+            "P": int(layout_cfg.get("P", 12)),
             "mode": "adaptive"
         }
     else:
@@ -48,7 +48,7 @@ def get_layout(config):
             "n_t": int(layout_cfg["n_t"]),
             "n_p": int(layout_cfg["n_p"]),
             "n_r": int(layout_cfg["n_r"]),
-            "P": int(layout_cfg.get("P", 10)),
+            "P": int(layout_cfg.get("P", 12)),
             "mode": "fixed"
         }
     print(f"[INFO] layout: {layout}")
@@ -57,8 +57,9 @@ def get_layout(config):
 
 def calculate_distances(config_path="input/config.yaml", config=None, actual_railcars=None):
     """Compute yard geometric distances.
-       If actual_railcars is provided, compute track-level mu correction.
-       Otherwise initialize with n=0 (idle state)."""
+        All distances are calculated in **ft**.
+        If actual_railcars is provided, compute track-level mu correction.
+        Otherwise, initialize with n=0 (idle state)."""
 
     if (config is None) and (config_path is not None):
         with open(config_path, "r") as f:
@@ -71,9 +72,11 @@ def calculate_distances(config_path="input/config.yaml", config=None, actual_rai
     # --- layout (adaptive or fixed) ---
     mode = layout_cfg.get("mode", "adaptive").lower()
     if mode == "adaptive":
-        df = layout_static#pd.read_excel(Path(layout_cfg["file_path"]))
+        df = layout_static  #pd.read_excel(Path(layout_cfg["file_path"]))
         batch_size = config["simulation"]["train_batch_size"]
-        row = df.loc[df["train batch (k)"] == batch_size]
+        num_tracks = yard_cfg["track_number"]
+        capacity = batch_size * num_tracks * 2
+        row = df.loc[df["train batch (k)"] == capacity]
         if row.empty:
             raise ValueError(f"No layout found for train batch size {batch_size}")
         row = row.iloc[0]
@@ -82,12 +85,12 @@ def calculate_distances(config_path="input/config.yaml", config=None, actual_rai
         M, N, n_t, n_p, n_r = int(layout_cfg["M"]), int(layout_cfg["N"]), int(layout_cfg["n_t"]), int(layout_cfg["n_p"]), int(layout_cfg["n_r"])
 
     # --- yard basic parameters ---
-    P = 10
-    BL_l = 10 * n_r
-    BL_w = 80
-    A_yard = M * 10 * n_r + (M + 1) * n_p * P  # yard length
-    B_yard = N * 80 + (N + 1) * n_p * P        # yard width
-    total_lane_length = A_yard * (N + 1) + B_yard * (M + 1)
+    P = 12                                     # single lane width (ft)
+    BL_l = 10 * n_r                            # parking block length (ft)
+    BL_w = 80                                  # parking block width (ft)
+    A_yard = M * BL_l + (M + 1) * n_p * P      # yard length (ft)
+    B_yard = N * BL_w + (N + 1) * n_p * P      # yard width (ft)
+    total_lane_length = A_yard * (N + 1) + B_yard * (M + 1) # total lane length (ft)
 
     # --- geometry from yard config ---
     railcar_length = float(yard_cfg["railcar_length"])
@@ -96,12 +99,16 @@ def calculate_distances(config_path="input/config.yaml", config=None, actual_rai
 
     # railcar and track
     # vary
-    n_max = math.ceil(A_yard / railcar_length)
+    # n_max = math.ceil(A_yard / railcar_length)
+    batch_size = config["simulation"]["train_batch_size"]
+    # todo: decouple function to determine n, n_max, etc.
+    n_max = batch_size
+    actual_railcars = batch_size
     n = 0 if actual_railcars is None else int(actual_railcars)
     mu = 1 if n == 0 else min(1.0, (n * railcar_length) / A_yard)
     # fixed
     YARD_TYPE = yard_cfg["yard_type"]  # choose 'perpendicular' or 'parallel'
-    l_c = 60         # The length of a railcar and joint (ft)
+    l_c = 60                           # The length of a railcar and joint (ft)
 
     if YARD_TYPE == 'parallel':
         # d_h: hostler distance
@@ -120,10 +127,10 @@ def calculate_distances(config_path="input/config.yaml", config=None, actual_rai
         d_t_avg = (d_t_max + d_t_min) / 2
 
         # d_tr: inter-track distance
-        term = max(0, ((mu - 0.5) * (1 - mu)) / mu)
-        d_tr_min = term * n_max * l_c + ((n - 1) / 2) * l_c + d_f + d_x + 0.5 * n_p * P
-        d_tr_mean = 0.5 * l_c + d_f + d_x + 0.5 * n_p * P
-        d_tr_max = n_max * l_c + d_f + d_x + 0.5 * n_p * P
+        term = 0.8    # no-decoupling in this case
+        d_tr_min = 1 * l_c + d_f + d_x + n_p * P + 50 + d_h_min
+        d_tr_mean = ((n_max - 1) / 2) * l_c + d_f + d_x + n_p * P + 50 + d_h_avg
+        d_tr_max = n_max * l_c + d_f + d_x + n_p * P + 50 + d_h_max
 
     elif YARD_TYPE == 'perpendicular':
         d_h_min = n_t * P + 1.5 * n_p * P
@@ -138,25 +145,25 @@ def calculate_distances(config_path="input/config.yaml", config=None, actual_rai
         d_t_avg = 0.5 * (B_yard + A_yard - 0.5 * n_p * P)
         d_t_max = B_yard + A_yard - 2 * n_p * P
 
-        d_tr_min = 0.5 * l_c + d_f + d_x + 0.5 * n_p * P
+        d_tr_min = 0.5 * l_c + d_f + d_x + 0.5 * n_p * P + 50
         term = max(0, ((mu - 0.5) * (1 - mu)) / mu)
-        d_tr_mean = term * n_max * l_c + ((n - 1) / 2) * l_c + d_f + d_x + 0.5 * n_p * P
-        d_tr_max = n_max * l_c + d_f + d_x + 0.5 * n_p * P
+        d_tr_mean = term * n_max * l_c + ((n - 1) / 2) * l_c + d_f + d_x + 0.5 * n_p * P + 50
+        d_tr_max = n_max * l_c + d_f + d_x + 0.5 * n_p * P + 50
 
     else:
         raise ValueError("Invalid YARD_TYPE, choose 'parallel' or 'perpendicular'.")
 
-    # return total_distance
+    # return distance parameters
     return {
         "M": M, "N": N, "n_t": n_t, "n_p": n_p, "n_r": n_r, "P": P,
         "yard_length": A_yard,
         "total_lane_length": total_lane_length,
         "railcar_length": railcar_length,
         "n_max": n_max, "n": n, "mu": mu,
-        "d_h_min": d_h_min, "d_h_max": d_h_max,
-        "d_r_min": d_r_min, "d_r_max": d_r_max,
-        "d_t_min": d_t_min, "d_t_max": d_t_max,
-        "d_tr_min": d_tr_min, "d_tr_mean": d_tr_mean, "d_tr_max": d_tr_max
+        "d_h_min": d_h_min, "d_h_max": d_h_max, # hostler travel distance distribution
+        "d_r_min": d_r_min, "d_r_max": d_r_max, # hostler reposition distance distribution
+        "d_t_min": d_t_min, "d_t_max": d_t_max, # truck travel distance distribution
+        "d_tr_min": d_tr_min, "d_tr_mean": d_tr_mean, "d_tr_max": d_tr_max  # inter-train travel distance
     }
 
 
@@ -168,8 +175,12 @@ def ugly_sigma(x):
 
 
 def speed_density(avg_density, vehicle_type, N):
+    """
+    Speed: mph
+    Density: vehicle per mile
+    """
     if vehicle_type == 'hostler':
-        speed = 8 * math.e ** ((-1.5 * N - 0.5) * avg_density)
+        speed = 5 * math.e ** ((-1.5 * N - 0.5) * avg_density)
     elif vehicle_type == 'truck':
         speed = 10 * math.e ** ((-3.5 * N - 0.5) * avg_density)
     else:
@@ -180,64 +191,44 @@ def speed_density(avg_density, vehicle_type, N):
 def simulate_truck_travel(truck_id, train_schedule, terminal, config=None, config_path="input/config.yaml"):
     params = calculate_distances(config = config, config_path = config_path)
     N = params["N"]
-    total_lane_length = params["total_lane_length"]
-    d_t_min, d_t_max = params["d_t_min"], params["d_t_max"]
+    total_lane_length = params["total_lane_length"]/3.28 # 1 meter = 3.28 ft
+    d_t_min, d_t_max = params["d_t_min"]/3.28, params["d_t_max"]/3.28
 
-    d_t_dist = 3.28 * uniform(loc=d_t_min, scale=(d_t_max - d_t_min)).rvs()
-    current_veh_num = train_schedule["truck_number"] - len(terminal.truck_store.items)
-    veh_density = current_veh_num / total_lane_length
-    truck_speed = speed_density(veh_density, 'truck', N)
-    truck_travel_time = d_t_dist / (2 * truck_speed * 3600)
+    d_t_dist = uniform(loc=d_t_min, scale=(d_t_max - d_t_min)).rvs()
+    current_veh_num = train_schedule['truck_number'] + len(terminal.parked_hostlers.items) # todo: train_schedule["truck_number"]  - len(terminal.truck_store.items)
+    veh_density = current_veh_num / total_lane_length   # veh/m
+    truck_speed = speed_density(veh_density, 'truck', N)    # m/s
+    truck_travel_time = d_t_dist / (2 * truck_speed * 3600)    # s -> hr
     return truck_travel_time, d_t_dist, truck_speed, veh_density
-
-
-def simulate_hostler_travel(hostler_id, current_veh_num, config=None, config_path="input/config.yaml"):
-    params = calculate_distances(config = config, config_path = config_path)
-    total_lane_length, N = params["total_lane_length"], params["N"]
-    d_h_min, d_h_max = params["d_h_min"], params["d_h_max"]
-
-    d_h_dist = 3.28 * uniform(loc=d_h_min, scale=(d_h_max - d_h_min)).rvs()
-    veh_density = current_veh_num / total_lane_length
-    hostler_speed = speed_density(veh_density, 'hostler', N)
-    hostler_travel_time = d_h_dist / (hostler_speed * 3600)
-    return hostler_travel_time, d_h_dist, hostler_speed, veh_density
 
 
 def simulate_reposition_travel(hostler_id, current_veh_num, config=None, config_path="input/config.yaml"):
     params = calculate_distances(config = config, config_path = config_path)
-    total_lane_length, N = params["total_lane_length"], params["N"]
-    d_r_min, d_r_max = params["d_r_min"], params["d_r_max"]
+    total_lane_length, N = params["total_lane_length"]/3.28, params["N"]
+    d_r_min, d_r_max = params["d_r_min"]/3.28, params["d_r_max"]/3.28
 
-    d_r_dist = 3.28 * uniform(loc=d_r_min, scale=(d_r_max - d_r_min)).rvs()
+    d_r_dist = uniform(loc=d_r_min, scale=(d_r_max - d_r_min)).rvs()
     veh_density = current_veh_num / total_lane_length
     hostler_speed = speed_density(veh_density, 'hostler', N)
     hostler_reposition_travel_time = d_r_dist / (hostler_speed * 3600)
     return hostler_reposition_travel_time, d_r_dist, hostler_speed, veh_density
 
 
-# def simulate_hostler_track_travel(hostler_id, current_veh_num, config_path="input/config.yaml"):
-#     params = calculate_distances(config_path)
-#     total_lane_length, N = params["total_lane_length"], params["N"]
-#     d_tr_min, d_tr_mean, d_tr_max = params["d_tr_min"], params["d_tr_mean"], params["d_tr_max"]
-#
-#     c = 3.28 * (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)
-#     d_tr_dist = triang(c, loc=d_tr_min, scale=d_tr_max - d_tr_min).rvs()
-#     veh_density = current_veh_num / total_lane_length
-#     hostler_speed = speed_density(veh_density, 'hostler', N)
-#     hostler_travel_time = d_tr_dist / (2 * hostler_speed * 3600)
-#     return hostler_travel_time
-
-
 def simulate_hostler_track_travel(hostler_id, current_veh_num, config=None, config_path="input/config.yaml"):
+    """
+    Multitrack call this function for distance calculations:
+    1. inter-track distance
+    2. hostler travel distance
+    """
     params = calculate_distances(config = config, config_path = config_path)
-    total_lane_length, N = params["total_lane_length"], params["N"]
-    d_tr_min, d_tr_mean, d_tr_max = params["d_tr_min"], params["d_tr_mean"], params["d_tr_max"]
+    total_lane_length, N = params["total_lane_length"]/3.28, params["N"]    # 1 meter = 3.28 ft
+    d_tr_min, d_tr_mean, d_tr_max = params["d_tr_min"]/3.28, params["d_tr_mean"]/3.28, params["d_tr_max"]/3.28
 
     # sanity check
     if d_tr_max <= d_tr_min:
-        raise ValueError(f"Invalid distance range: d_tr_max={d_tr_max}, d_tr_min={d_tr_min}")
+        raise ValueError(f"Invalid distance range: d_tr_max={d_tr_max} meters, d_tr_min={d_tr_min} meters")
     if not (d_tr_min <= d_tr_mean <= d_tr_max):
-        raise ValueError(f"d_tr_mean ({d_tr_mean}) must be between min ({d_tr_min}) and max ({d_tr_max})")
+        raise ValueError(f"d_tr_mean ({d_tr_mean}) must be between min ({d_tr_min}) meters and max ({d_tr_max}) meters")
 
     # normalized c (ensure 0 < c < 1)
     c = (d_tr_mean - d_tr_min) / (d_tr_max - d_tr_min)
@@ -246,12 +237,6 @@ def simulate_hostler_track_travel(hostler_id, current_veh_num, config=None, conf
     d_tr_dist = triang(c, loc=d_tr_min, scale=d_tr_max - d_tr_min).rvs()
     veh_density = current_veh_num / total_lane_length
     hostler_speed = speed_density(veh_density, 'hostler', N)
-    hostler_travel_time = 3.28 * d_tr_dist / (2 * hostler_speed * 3600)
+    hostler_travel_time = d_tr_dist / (hostler_speed * 3600)    # 1 hr = 3,600 s
 
     return hostler_travel_time, d_tr_dist, hostler_speed, veh_density
-
-
-# # test
-# if __name__ == "__main__":
-#     total = calculate_distances("input/config.yaml")
-#     print(f"Total estimated distance: {total:.2f}")
