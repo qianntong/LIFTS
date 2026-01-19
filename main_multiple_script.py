@@ -25,16 +25,15 @@ SIMUL_OPTION: option 1: Run all combinations; option 2: Run limited number for t
 MAX_RUN_FOR_TEST: int input - if option 2, specify how many cases to test
 """
 SIMULATION_PARAMS = {
-    'track_number': [2],
-    'cranes_per_track': [2],
-    'hostler_number': [6, 12],
-    'train_batch_size': [100],
-    'train_number': list(range(10, 51, 10))
+    'track_number': [5],
+    'cranes_per_track': [4],
+    'hostler_number': [120, 240, 360],
+    'train_batch_size': [20, 50, 100, 150, 200],
+    'train_number': list(range(1, 31, 5))
 }
 
 SIMUL_OPTION = 1
 MAX_RUN_FOR_TEST = 3
-
 
 """
 Please don't change any logic/codes below!!!!
@@ -201,9 +200,9 @@ def collect_results(container_data, updated_config: Dict, params: Dict, run_id: 
             'train_batch_size': updated_config["simulation"]["train_batch_size"],
             'trains_per_day': updated_config["simulation"]["train_number"],
             'avg_ic_processing_time': results_dict['ic_processing_time_mean'],
-            'avg_ic_delay_time': results_dict['ic_delay_time_mean'],
+            # 'avg_ic_delay_time': results_dict['ic_delay_time_mean'],
             'avg_oc_processing_time': results_dict['oc_processing_time_mean'],
-            'avg_oc_delay_time': results_dict['oc_delay_time_mean'],
+            'avg_train_delay_time': results_dict['oc_delay_time_mean'],
         }
 
         print(f"    Done! Results collected successfully for run {run_id}")

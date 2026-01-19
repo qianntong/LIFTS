@@ -1,0 +1,567 @@
+from dataclasses import dataclass
+from typing import Optional
+import random
+import yaml
+import simpy
+import csv
+
+input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
+
+container_events = {}
+EVENT_COLUMN_MAP = {
+    # arrival
+    "arrived": "origin_arrival_time",
+    # IC flow
+    "to_chassis": "ic_to_chassis_time",
+    "hostler_pick_up_IC": "hostler_pick_up_ic_time",
+    "hostler_drop_off_IC": "hostler_drop_off_ic_time",
+    "picked_by_truck": "truck_pick_up_ic_time",
+    # OC flow
+    "hostler_pick_up_OC": "hostler_pick_up_oc_time",
+    "hostler_drop_off_OC": "hostler_drop_off_oc_time",
+}
+
+
+@dataclass
+class Container:
+    id: int
+    origin_mode: str          # 'vessel', 'train', or 'truck'
+    origin_id: int
+    destination_mode: str     # 'vessel', 'train', or 'truck'
+    destination_id: Optional[int] = None   # later assigned
+
+    def __str__(self) -> str:
+        return f"C-{self.id}-{self.origin_mode}-{self.origin_id}-{self.destination_mode}-{self.destination_id}"
+
+
+@dataclass
+class Crane:
+    id: int
+    location: str              # 'trackside' | 'dock'
+    parent_id: int = None      # track_id or berth_id
+    crane_type: str = 'Diesel'
+
+    def __str__(self):
+        return f"Crane-{self.location}-{self.parent_id}-{self.id}"
+
+
+@dataclass
+class Truck:
+    id: int = 0
+    truck_type: str = 'Diesel'
+
+    def __str__(self) -> str:
+        return f"Truck-{self.id}-{self.truck_type}"
+
+
+@dataclass
+class Hostler:
+    type: str = 'Diesel'
+    id: int = 0
+
+    def to_string(self) -> str:
+        return f'{self.id}-{self.type}'
+
+
+class Terminal:
+    def __init__(self, env, config):
+        self.env = env
+        self.config = config
+
+        yard_cfg = config["yard"]
+        term_cfg = config["terminal"]
+        gate_cfg = config["gates"]
+
+        self.yard_type = yard_cfg["yard_type"]
+        self.receiving_track_numbers = int(yard_cfg["receiving_track_numbers"])
+        self.railcar_length = float(yard_cfg["railcar_length"])
+        self.d_f = float(yard_cfg["d_f"])
+        self.d_x = float(yard_cfg["d_x"])
+
+        self.hostler_number = int(term_cfg["hostler_number"])
+        self.hostler_diesel_percentage = float(term_cfg["hostler_diesel_percentage"])
+        self.in_gate_numbers = int(gate_cfg["in_gate_numbers"])
+        self.out_gate_numbers = int(gate_cfg["out_gate_numbers"])
+
+        # tracks cranes
+        self.track_number = int(yard_cfg["track_number"])
+        self.tracks = simpy.Store(env, capacity=self.track_number)
+        for track_id in range(1, self.track_number + 1):
+            self.tracks.put(track_id)
+
+        self.cranes_per_track = int(term_cfg["cranes_per_track"])
+        self.cranes_by_track = {
+            track_id: simpy.Store(env, capacity=self.cranes_per_track)
+            for track_id in range(1, self.track_number + 1)
+        }
+
+        for track_id in range(1, self.track_number + 1):
+            for crane_id in range(1, self.cranes_per_track + 1):
+                self.cranes_by_track[track_id].put(
+                    Crane(
+                        id=crane_id,
+                        location="Trackside",
+                        parent_id=track_id,
+                        crane_type="Hybrid"
+                    )
+                )
+
+        # dock berths and cranes
+        self.berth_number = int(yard_cfg["berth_number"])
+        self.berths = simpy.Store(env, capacity=self.berth_number)
+
+        for berth_id in range(1, self.berth_number + 1):
+            self.berths.put(berth_id)
+
+        self.cranes_per_berth = int(term_cfg["cranes_per_berth"])
+        self.cranes_by_berth = {
+            berth_id: simpy.Store(env, capacity=self.cranes_per_berth)
+            for berth_id in range(1, self.berth_number + 1)
+        }
+
+        for berth_id in range(1, self.berth_number + 1):
+            for crane_id in range(1, self.cranes_per_berth + 1):
+                self.cranes_by_berth[berth_id].put(
+                    Crane(
+                        id=crane_id,
+                        location="Dock",
+                        parent_id=berth_id,
+                        crane_type="Hybrid"
+                    )
+                )
+
+        hostler_total = self.hostler_number
+        hostler_diesel = round(hostler_total * self.hostler_diesel_percentage)
+        hostler_electric = hostler_total - hostler_diesel
+
+        self.hostler_pool = simpy.Store(env, capacity=hostler_total)
+
+        hostlers = (
+            [Hostler(id=i, type="Diesel") for i in range(hostler_diesel)] +
+            [Hostler(id=i + hostler_diesel, type="Electric") for i in range(hostler_electric)]
+        )
+
+        for h in hostlers:
+            self.hostler_pool.put(h)
+
+        self.truck_pool = simpy.Store(env, capacity=10**6)
+        self.container_stack = simpy.FilterStore(env, capacity=10**6)
+        self.trackside_chassis = simpy.FilterStore(env, capacity=10**6)
+        self.berthside_chassis = simpy.FilterStore(env, capacity=10**6)
+
+        self.in_gates = simpy.Resource(env, capacity=self.in_gate_numbers)
+        self.out_gates = simpy.Resource(env, capacity=self.out_gate_numbers)
+
+        self.VEHICLE_TRAVEL_TIME = 1 / 600
+        self.CONTAINERS_PER_CRANE_MOVE_MEAN = 2 / 60
+        self.CRANE_MOVE_DEV_TIME = 1 / 3600
+        self.TRUCK_DIESEL_PERCENTAGE = 1
+        self.TRUCK_ARRIVAL_MEAN = 2 / 60
+        self.TRUCK_INGATE_TIME = 2 / 60
+        self.TRUCK_OUTGATE_TIME = 2 / 60
+        self.TRUCK_INGATE_TIME_DEV = 2 / 60
+        self.TRUCK_OUTGATE_TIME_DEV = 2 / 60
+
+
+class ArrivalContext:
+    def __init__(self, env, mode: str, arrival_id: int):
+        """
+        mode: 'train' or 'vessel'
+        arrival_id: train_id or vessel_id
+        """
+        self.env = env
+        self.mode = mode
+        self.id = arrival_id
+
+        self.arrived = env.event()        # arrival happens
+        self.ic_unloaded = env.event()    # all inbound containers unloaded to chassis
+        self.ic_cleared = env.event()     # all inbound containers moved to stack
+        self.oc_ready = env.event()       # outbound containers prepared at chassis
+        self.oc_loaded = env.event()      # all outbound containers loaded
+        self.departed = env.event()       # departure completed
+
+    def is_inbound(self, container) -> bool:
+        return container.origin_mode == self.mode and container.origin_id == self.id
+
+    def is_outbound(self, container) -> bool:
+        return (container.destination_mode == self.mode
+            and container.destination_id == self.id)
+
+    def __str__(self):
+        return f"{self.mode.capitalize()}-{self.id}"
+
+
+class TruckContext:
+    def __init__(self, env, truck_id: int):
+        self.env = env
+        self.mode = 'truck'
+        self.id = truck_id
+
+        self.arrived = env.event()        # arrives at in-gate
+        self.ic_dropped = env.event()     # ic dropped to stack
+        self.oc_picked = env.event()      # oc picked from stack
+        self.departed = env.event()       # leaves terminal
+
+    def is_inbound(self, container) -> bool:
+        return container.origin_mode == 'truck'
+
+    def is_outbound(self, container) -> bool:
+        return container.destination_mode == 'truck'
+
+    def __str__(self):
+        return f"Truck-{self.id}"
+
+
+def load_config(path):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+
+def record_event(container, event_type, timestamp):
+    """
+    container: Container object (stateful)
+    event_type: str
+    timestamp: float
+    """
+    cid = container.id
+
+    if cid not in container_events:
+        container_events[cid] = {
+            "container": container,
+            "timeline": {}
+        }
+
+    container_events[cid]["timeline"][event_type] = timestamp
+
+
+
+def generate_timetable(config):
+    sim_length = float(config["simulation"]["length"])
+    timetable_cfg = config["timetable"]
+
+    timetable = []
+    arrival_counter = {"train": 0, "vessel": 0, "truck": 0}
+
+    # Train
+    train_cfg = timetable_cfg["train"]
+    if train_cfg.get("enabled", True):
+        headway = float(train_cfg["headway"])
+        batch_size = int(train_cfg["batch_size"])
+        destination_split = train_cfg["destination_split"]
+
+        trains_per_day = int(round(24 / headway))
+        day = 0
+
+        while day * 24 < sim_length:
+            base_time = day * 24 + 12.0
+            arrivals = [base_time + random.uniform(-12, 12) for _ in range(trains_per_day)]
+            arrivals.sort()
+
+            for t in arrivals:
+                if 0 <= t <= sim_length:
+                    arrival_counter["train"] += 1
+                    timetable.append({
+                        "mode": "train",
+                        "arrival_id": arrival_counter["train"],
+                        "arrival_time": round(t, 4),
+                        "batch_size": batch_size,
+                        "destination_split": destination_split
+                    })
+
+            day += 1
+
+    # Vessel
+    vessel_cfg = timetable_cfg["vessel"]
+    if vessel_cfg.get("enabled", True):
+        headway = float(vessel_cfg["headway"])
+        batch_size = int(vessel_cfg["batch_size"])
+        destination_split = vessel_cfg["destination_split"]
+
+        t = 0.0
+        while t <= sim_length:
+            delay = random.uniform(-24, 24)
+            arrival_time = t + delay
+
+            if 0 <= arrival_time <= sim_length:
+                arrival_counter["vessel"] += 1
+                timetable.append({
+                    "mode": "vessel",
+                    "arrival_id": arrival_counter["vessel"],
+                    "arrival_time": round(arrival_time, 4),
+                    "batch_size": batch_size,
+                    "destination_split": destination_split
+                })
+
+            t += headway
+
+    # Truck
+    truck_cfg = timetable_cfg["truck"]
+    if truck_cfg.get("enabled", True):
+        mean_interarrival = float(truck_cfg["headway"])
+        batch_size = int(truck_cfg["batch_size"])
+        destination_split = truck_cfg["destination_split"]
+
+        t = 0.0
+        while t <= sim_length:
+            interarrival = random.expovariate(1.0 / mean_interarrival)
+            t += interarrival
+
+            if t > sim_length:
+                break
+
+            arrival_counter["truck"] += 1
+            timetable.append({
+                "mode": "truck",
+                "arrival_id": arrival_counter["truck"],
+                "arrival_time": round(t, 4),
+                "batch_size": batch_size,
+                "destination_split": destination_split
+            })
+
+    timetable.sort(key=lambda x: x["arrival_time"])
+    return timetable
+
+
+def generate_containers(arrival_entry):
+    containers = []
+    mode = arrival_entry["mode"]
+    arrival_id = arrival_entry["arrival_id"]
+    batch_size = arrival_entry["batch_size"]
+    destination_split = arrival_entry["destination_split"]
+
+    destinations = list(destination_split.keys())
+    weights = list(destination_split.values())
+    for i in range(batch_size):
+        dest_mode = random.choices(destinations, weights=weights, k=1)[0]
+        c = Container(
+            id=i,
+            origin_mode=mode,
+            origin_id=arrival_id,
+            destination_mode=dest_mode,
+            destination_id=None
+        )
+        containers.append(c)
+    return containers
+
+
+def truck_pickup_ic_process(env, terminal, ctx, truck, ic):
+    ic.destination_id = truck.id
+    travel_time_to_gate = 0
+    yield env.timeout(travel_time_to_gate)
+    record_event(ic, "picked_by_truck", env.now)
+    yield terminal.truck_pool.put(truck)
+
+
+def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
+    """
+    One complete IC -> OC cycle handled by a single hostler
+    """
+    # 1. get hostler
+    hostler = yield terminal.hostler_pool.get()
+
+    # 2. travel to chassis and pick IC
+    park_chassis_travel_time = 0
+    yield env.timeout(park_chassis_travel_time)
+    yield chassis_store.get(lambda c: c == ic)
+    record_event(ic, "hostler_pick_up_IC", env.now)
+
+    # 3. move IC to stack
+    chassis_stack_travel_time = 0
+    yield env.timeout(chassis_stack_travel_time)
+    yield terminal.container_stack.put(ic)
+    record_event(ic, "hostler_drop_off_IC", env.now)
+
+    # 4. trigger truck pickup, vessel yield to arrivals
+    if ic.destination_mode == "truck":
+        truck = yield terminal.truck_pool.get()
+        env.process(truck_pickup_ic_process(env, terminal, ctx, truck, ic))
+    # elif ic.destination_mode == "vessel":
+    #     yield
+
+    # 5. find OC and bind destination
+    oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
+    oc.destination_id = ic.origin_id
+    record_event(oc, "hostler_pick_up_OC", env.now)
+
+    # 6. move OC back to chassis
+    yield env.timeout(chassis_stack_travel_time)
+    yield chassis_store.put(oc)
+    record_event(oc, "hostler_drop_off_OC", env.now)
+
+    # 7. release hostler
+    yield terminal.hostler_pool.put(hostler)
+
+    # 8. IC cleared check (arrival-level)
+    if not any(ctx.is_inbound(c) for c in chassis_store.items):
+        if not ctx.ic_cleared.triggered:
+            ctx.ic_cleared.succeed()
+            print(f"[{env.now:.2f}] All IC cleared from chassis for {ctx}")
+
+
+def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
+    """
+    Generator process: start crane unload for inbound containers
+    """
+    resource_type, resource_id = ctx.assigned_resource
+
+    if resource_type == "track":
+        crane_pool = terminal.cranes_by_track[resource_id]
+        chassis_store = terminal.trackside_chassis
+    elif resource_type == "berth":
+        crane_pool = terminal.cranes_by_berth[resource_id]
+        chassis_store = terminal.berthside_chassis
+    else:
+        raise ValueError("Unknown resource type")
+
+    remaining = len(inbound_containers)
+
+    def unload_one(container):
+        nonlocal remaining
+
+        crane = yield crane_pool.get()
+
+        unload_time = 0.02
+        yield env.timeout(unload_time)
+        record_event(container, "to_chassis", env.now)
+
+        yield chassis_store.put(container)
+        yield crane_pool.put(crane)
+        env.process(hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, container))
+
+        remaining -= 1
+        if remaining == 0 and not ctx.ic_unloaded.triggered:
+            ctx.ic_unloaded.succeed()
+            print(f"[{env.now:.2f}] All IC unloaded for {mode}-{ctx.id}")
+
+    for c in inbound_containers:
+        env.process(unload_one(c))
+
+    yield ctx.ic_unloaded
+
+
+def train_vessel_arrival_process(env, terminal, arrival_entry):
+    mode = arrival_entry["mode"]
+    arrival_id = arrival_entry["arrival_id"]
+
+    ctx = ArrivalContext(env, mode, arrival_id)
+
+    yield env.timeout(arrival_entry["arrival_time"] - env.now)
+    print(f"\n[{env.now:.2f}] [{mode}] {ctx} ARRIVED")
+
+    if mode == "train":
+        track_id = yield terminal.tracks.get()
+        if track_id is None:
+            terminal.waiting_trains.append(arrival_id)
+            return
+        ctx.assigned_resource = ("track", track_id)
+        print(f"  Train {arrival_id} assigned to track {track_id}")
+
+    elif mode == "vessel":
+        berth_id = yield terminal.berths.get()
+        if berth_id is None:
+            terminal.waiting_vessels.append(arrival_id)
+            return
+        ctx.assigned_resource = ("berth", berth_id)
+        print(f"  Vessel {arrival_id} assigned to berth {berth_id}")
+
+    ctx.arrived.succeed()
+
+    containers = generate_containers(arrival_entry)
+    inbound = [c for c in containers if c.origin_mode == mode]
+
+    for c in inbound:
+        record_event(c, "arrived", env.now)
+
+    env.process(crane_unload_inbound_process(env,terminal,mode,ctx,inbound))
+
+
+def truck_arrival_process(env, terminal, arrival_entry):
+    arrival_id = arrival_entry["arrival_id"]
+    ctx = TruckContext(env, arrival_id)
+    yield env.timeout(arrival_entry["arrival_time"] - env.now)
+
+    truck = Truck(id=arrival_id)
+    ctx.truck = truck
+    ctx.arrived.succeed()
+
+    container = generate_containers(arrival_entry)[0]
+    with terminal.in_gates.request() as req:
+        yield req
+        yield env.timeout(terminal.TRUCK_INGATE_TIME)
+
+    yield terminal.container_stack.put(container)
+    yield terminal.truck_pool.put(truck)
+    # print(f"[{env.now:.2f}] Truck {truck.id} dropped {container} to stack")
+    ctx.ic_dropped.succeed()
+
+
+def export_container_events_to_csv(filename):
+    rows = []
+
+    timeline_columns = list(EVENT_COLUMN_MAP.values())
+
+    fieldnames = [
+        "container_id",
+        "origin_mode",
+        "origin_id",
+        "destination_mode",
+        "destination_id",
+    ] + timeline_columns
+
+    for cid, info in container_events.items():
+        container = info["container"]
+        timeline = info["timeline"]
+
+        row = {
+            "container_id": cid,
+            "origin_mode": container.origin_mode,
+            "origin_id": container.origin_id,
+            "destination_mode": container.destination_mode,
+            "destination_id": container.destination_id,
+        }
+
+        # initialize all timeline columns as empty
+        for col in timeline_columns:
+            row[col] = None
+
+        # fill occurred events
+        for event_type, ts in timeline.items():
+            if event_type in EVENT_COLUMN_MAP:
+                col = EVENT_COLUMN_MAP[event_type]
+                row[col] = ts
+
+        rows.append(row)
+
+    with open(filename, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def main():
+    random.seed(42)
+    env = simpy.Environment()
+
+    input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
+    config = load_config(input_config_yaml)
+
+    terminal = Terminal(env, config)
+    timetable = generate_timetable(config)
+
+    print(f"Generated {len(timetable)} arrivals")
+
+    for entry in timetable:
+        if entry["mode"] in ["train", "vessel"]:
+            env.process(train_vessel_arrival_process(env, terminal, entry))
+        elif entry["mode"] == "truck":
+            env.process(truck_arrival_process(env, terminal, entry))
+
+    sim_length = min( config["simulation"]["length"],100)
+    env.run(until=sim_length)
+
+    export_container_events_to_csv("output/container_flow_test.csv")
+    print("Simulation finished. Results saved to container_flow_test.csv")
+
+
+if __name__ == "__main__":
+    main()
