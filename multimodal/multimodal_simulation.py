@@ -4,22 +4,10 @@ import random
 import yaml
 import simpy
 import csv
+import os
 
 input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
-
 container_events = {}
-EVENT_COLUMN_MAP = {
-    # arrival
-    "arrived": "origin_arrival_time",
-    # IC flow
-    "to_chassis": "ic_to_chassis_time",
-    "hostler_pick_up_IC": "hostler_pick_up_ic_time",
-    "hostler_drop_off_IC": "hostler_drop_off_ic_time",
-    "picked_by_truck": "truck_pick_up_ic_time",
-    # OC flow
-    "hostler_pick_up_OC": "hostler_pick_up_oc_time",
-    "hostler_drop_off_OC": "hostler_drop_off_oc_time",
-}
 
 
 @dataclass
@@ -37,7 +25,7 @@ class Container:
 @dataclass
 class Crane:
     id: int
-    location: str              # 'trackside' | 'dock'
+    location: str              # 'trackside', 'berthside'
     parent_id: int = None      # track_id or berth_id
     crane_type: str = 'Diesel'
 
@@ -146,6 +134,7 @@ class Terminal:
 
         self.truck_pool = simpy.Store(env, capacity=10**6)
         self.container_stack = simpy.FilterStore(env, capacity=10**6)
+        self.container_stack_buffer = simpy.FilterStore(env, capacity=10**6)
         self.trackside_chassis = simpy.FilterStore(env, capacity=10**6)
         self.berthside_chassis = simpy.FilterStore(env, capacity=10**6)
 
@@ -217,22 +206,65 @@ def load_config(path):
         return yaml.safe_load(f)
 
 
-def record_event(container, event_type, timestamp):
+def normalize_container_events(container_events):
     """
-    container: Container object (stateful)
-    event_type: str
-    timestamp: float
-    """
-    cid = container.id
+    Normalize container event records by consolidating lifecycle updates.
 
-    if cid not in container_events:
-        container_events[cid] = {
-            "container": container,
+    Container identity is defined by:
+        (origin_mode, origin_id, destination_mode, container_index)
+
+    destination_id is treated as a lifecycle attribute and may be updated
+    over time without creating a new container record.
+    """
+    normalized = {}
+
+    for key, info in container_events.items():
+        origin_mode, origin_id, dest_mode, dest_id, index = key
+
+        norm_key = (origin_mode, origin_id, dest_mode, index)
+
+        if norm_key not in normalized:
+            normalized[norm_key] = {
+                "origin_mode": origin_mode,
+                "origin_id": origin_id,
+                "destination_mode": dest_mode,
+                "destination_id": None,
+                "container_index": index,
+                "timeline": {}
+            }
+
+        for event, data in info["timeline"].items():
+            normalized[norm_key]["timeline"][event] = data
+
+        if dest_id is not None:
+            normalized[norm_key]["destination_id"] = dest_id
+
+    return normalized
+
+
+def record_event(container, event, time, extra=None):
+    key = (
+        container.origin_mode,
+        container.origin_id,
+        container.destination_mode,
+        container.destination_id,
+        container.id
+    )
+
+    if key not in container_events:
+        container_events[key] = {
+            "origin_mode": container.origin_mode,
+            "origin_id": container.origin_id,
+            "destination_mode": container.destination_mode,
+            "destination_id": container.destination_id,
+            "index": container.id,
             "timeline": {}
         }
 
-    container_events[cid]["timeline"][event_type] = timestamp
-
+    container_events[key]["timeline"][event] = {
+        "time": time,
+        **(extra or {})
+    }
 
 
 def generate_timetable(config):
@@ -344,14 +376,6 @@ def generate_containers(arrival_entry):
     return containers
 
 
-def truck_pickup_ic_process(env, terminal, ctx, truck, ic):
-    ic.destination_id = truck.id
-    travel_time_to_gate = 0
-    yield env.timeout(travel_time_to_gate)
-    record_event(ic, "picked_by_truck", env.now)
-    yield terminal.truck_pool.put(truck)
-
-
 def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     """
     One complete IC -> OC cycle handled by a single hostler
@@ -368,15 +392,19 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     # 3. move IC to stack
     chassis_stack_travel_time = 0
     yield env.timeout(chassis_stack_travel_time)
-    yield terminal.container_stack.put(ic)
     record_event(ic, "hostler_drop_off_IC", env.now)
 
-    # 4. trigger truck pickup, vessel yield to arrivals
+    # 4. IC dropped
     if ic.destination_mode == "truck":
         truck = yield terminal.truck_pool.get()
-        env.process(truck_pickup_ic_process(env, terminal, ctx, truck, ic))
-    # elif ic.destination_mode == "vessel":
-    #     yield
+        ic.destination_id = truck.id
+        # print(f"[TRUCK] [{env.now}] {truck.id} -> {ic}")
+        travel_time_to_gate = 0.01
+        yield env.timeout(travel_time_to_gate)
+        record_event(ic, "picked_by_truck", env.now)
+        yield terminal.truck_pool.put(truck)
+    else:
+        terminal.container_stack.put(ic)
 
     # 5. find OC and bind destination
     oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
@@ -422,7 +450,7 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
 
         unload_time = 0.02
         yield env.timeout(unload_time)
-        record_event(container, "to_chassis", env.now)
+        record_event(container, "chassis_unload", env.now)
 
         yield chassis_store.put(container)
         yield crane_pool.put(crane)
@@ -444,7 +472,6 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
     arrival_id = arrival_entry["arrival_id"]
 
     ctx = ArrivalContext(env, mode, arrival_id)
-
     yield env.timeout(arrival_entry["arrival_time"] - env.now)
     print(f"\n[{env.now:.2f}] [{mode}] {ctx} ARRIVED")
 
@@ -455,6 +482,7 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
             return
         ctx.assigned_resource = ("track", track_id)
         print(f"  Train {arrival_id} assigned to track {track_id}")
+
 
     elif mode == "vessel":
         berth_id = yield terminal.berths.get()
@@ -477,12 +505,12 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
 
 def truck_arrival_process(env, terminal, arrival_entry):
     arrival_id = arrival_entry["arrival_id"]
-    ctx = TruckContext(env, arrival_id)
+    truck_ctx = TruckContext(env, arrival_id)
     yield env.timeout(arrival_entry["arrival_time"] - env.now)
 
     truck = Truck(id=arrival_id)
-    ctx.truck = truck
-    ctx.arrived.succeed()
+    truck_ctx.truck = truck
+    truck_ctx.arrived.succeed()
 
     container = generate_containers(arrival_entry)[0]
     with terminal.in_gates.request() as req:
@@ -491,51 +519,72 @@ def truck_arrival_process(env, terminal, arrival_entry):
 
     yield terminal.container_stack.put(container)
     yield terminal.truck_pool.put(truck)
-    # print(f"[{env.now:.2f}] Truck {truck.id} dropped {container} to stack")
-    ctx.ic_dropped.succeed()
+    truck_ctx.ic_dropped.succeed()
+
+    return truck_ctx
 
 
-def export_container_events_to_csv(filename):
-    rows = []
+def export_container_events_to_three_csvs(filepath, prefix):
+    normalized_events = normalize_container_events(container_events)
 
-    timeline_columns = list(EVENT_COLUMN_MAP.values())
+    all_events = sorted({
+        event
+        for info in normalized_events.values()
+        for event in info["timeline"].keys()
+    })
 
-    fieldnames = [
-        "container_id",
+    base_columns = [
         "origin_mode",
         "origin_id",
         "destination_mode",
         "destination_id",
-    ] + timeline_columns
+        "container_index"
+    ]
 
-    for cid, info in container_events.items():
-        container = info["container"]
+    header = base_columns + all_events
+
+    files = {
+        "train": open(os.path.join(filepath, f"{prefix}_train.csv"), "w", newline=""),
+        "vessel": open(os.path.join(filepath, f"{prefix}_vessel.csv"), "w", newline=""),
+        "truck": open(os.path.join(filepath, f"{prefix}_truck.csv"), "w", newline="")
+    }
+
+    writers = {
+        mode: csv.writer(f)
+        for mode, f in files.items()
+    }
+
+    # write headers
+    for writer in writers.values():
+        writer.writerow(header)
+
+    # write rows
+    for key, info in normalized_events.items():
+        origin_mode, origin_id, dest_mode, index = key
+
+        if origin_mode not in writers:
+            continue
+
+        row = [
+            origin_mode,
+            origin_id,
+            dest_mode,
+            info["destination_id"],
+            index
+        ]
+
         timeline = info["timeline"]
 
-        row = {
-            "container_id": cid,
-            "origin_mode": container.origin_mode,
-            "origin_id": container.origin_id,
-            "destination_mode": container.destination_mode,
-            "destination_id": container.destination_id,
-        }
+        for event in all_events:
+            row.append(
+                timeline[event]["time"] if event in timeline else ""
+            )
 
-        # initialize all timeline columns as empty
-        for col in timeline_columns:
-            row[col] = None
+        writers[origin_mode].writerow(row)
 
-        # fill occurred events
-        for event_type, ts in timeline.items():
-            if event_type in EVENT_COLUMN_MAP:
-                col = EVENT_COLUMN_MAP[event_type]
-                row[col] = ts
+    for f in files.values():
+        f.close()
 
-        rows.append(row)
-
-    with open(filename, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 def main():
@@ -548,7 +597,7 @@ def main():
     terminal = Terminal(env, config)
     timetable = generate_timetable(config)
 
-    print(f"Generated {len(timetable)} arrivals")
+    print(f"[Timetable] {len(timetable)} arrivals")
 
     for entry in timetable:
         if entry["mode"] in ["train", "vessel"]:
@@ -556,11 +605,11 @@ def main():
         elif entry["mode"] == "truck":
             env.process(truck_arrival_process(env, terminal, entry))
 
-    sim_length = min( config["simulation"]["length"],100)
+    sim_length = min(config["simulation"]["length"],500)
     env.run(until=sim_length)
 
-    export_container_events_to_csv("output/container_flow_test.csv")
-    print("Simulation finished. Results saved to container_flow_test.csv")
+    export_container_events_to_three_csvs("output/ContainerLog/", None)
+    print("Simulation finished. Results saved!")
 
 
 if __name__ == "__main__":
