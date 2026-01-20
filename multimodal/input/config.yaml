@@ -19,7 +19,7 @@ timetable:
       truck: 0.5
   truck:
     enabled: true
-    headway: 0.001       # oc prepared
+    headway: 0.01       # oc prepared
     batch_size: 1         # single-stacked
     destination_split:
       vessel: 0.5

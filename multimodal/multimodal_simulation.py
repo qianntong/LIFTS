@@ -153,7 +153,7 @@ class Terminal:
 
 
 class ArrivalContext:
-    def __init__(self, env, mode: str, arrival_id: int):
+    def __init__(self, env, mode: str, arrival_id: int, batch_size):
         """
         mode: 'train' or 'vessel'
         arrival_id: train_id or vessel_id
@@ -161,6 +161,8 @@ class ArrivalContext:
         self.env = env
         self.mode = mode
         self.id = arrival_id
+        self.batch_size = batch_size
+        self.loaded_containers = []
 
         self.arrived = env.event()        # arrival happens
         self.ic_unloaded = env.event()    # all inbound containers unloaded to chassis
@@ -376,6 +378,11 @@ def generate_containers(arrival_entry):
     return containers
 
 
+def check_oc_ready(ctx, chassis_store):
+    count = sum(1 for c in chassis_store.items if ctx.is_outbound(c))
+    return count == ctx.batch_size
+
+
 def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     """
     One complete IC -> OC cycle handled by a single hostler
@@ -394,15 +401,16 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     yield env.timeout(chassis_stack_travel_time)
     record_event(ic, "hostler_drop_off_IC", env.now)
 
-    # 4. IC dropped
+    # 4. IC dropped and picked up by trucks
     if ic.destination_mode == "truck":
         truck = yield terminal.truck_pool.get()
         ic.destination_id = truck.id
         # print(f"[TRUCK] [{env.now}] {truck.id} -> {ic}")
         travel_time_to_gate = 0.01
         yield env.timeout(travel_time_to_gate)
-        record_event(ic, "picked_by_truck", env.now)
+        record_event(ic, "departure", env.now)
         yield terminal.truck_pool.put(truck)
+    # IC dropped to container stack, and about to be OC when train/vessel arrives
     else:
         terminal.container_stack.put(ic)
 
@@ -411,7 +419,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     oc.destination_id = ic.origin_id
     record_event(oc, "hostler_pick_up_OC", env.now)
 
-    # 6. move OC back to chassis
+    # 6. move OC back to chassis and
     yield env.timeout(chassis_stack_travel_time)
     yield chassis_store.put(oc)
     record_event(oc, "hostler_drop_off_OC", env.now)
@@ -424,6 +432,11 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
         if not ctx.ic_cleared.triggered:
             ctx.ic_cleared.succeed()
             print(f"[{env.now:.2f}] All IC cleared from chassis for {ctx}")
+
+    # 9. OC ready check
+    if not ctx.oc_ready.triggered and check_oc_ready(ctx, chassis_store):
+        ctx.oc_ready.succeed()
+        print(f"[{env.now:.2f}] {ctx} OC ready on chassis")
 
 
 def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
@@ -467,11 +480,59 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
     yield ctx.ic_unloaded
 
 
+def crane_load_outbound_process(env, terminal, ctx):
+    """
+    Mirror of crane_unload_inbound_process:
+    Load outbound containers from chassis to train/vessel
+    """
+
+    resource_type, resource_id = ctx.assigned_resource
+
+    if resource_type == "track":
+        crane_pool = terminal.cranes_by_track[resource_id]
+        chassis_store = terminal.trackside_chassis
+    elif resource_type == "berth":
+        crane_pool = terminal.cranes_by_berth[resource_id]
+        chassis_store = terminal.berthside_chassis
+    else:
+        raise ValueError("Unknown resource type")
+
+    yield ctx.oc_ready
+
+    remaining = ctx.batch_size
+
+    def load_one():
+        nonlocal remaining
+
+        crane = yield crane_pool.get()
+
+        oc = yield chassis_store.get(lambda c: ctx.is_outbound(c))
+
+        load_time = 0.02
+        yield env.timeout(load_time)
+        record_event(oc, "chassis_load", env.now)
+        ctx.loaded_containers.append(oc)
+
+        yield crane_pool.put(crane)
+
+        remaining -= 1
+        if remaining == 0 and not ctx.oc_loaded.triggered:
+            ctx.oc_loaded.succeed()
+            print(f"[{env.now:.2f}] All OC loaded for {ctx}")
+
+    for _ in range(ctx.batch_size):
+        env.process(load_one())
+
+    yield ctx.oc_loaded
+
+
+
 def train_vessel_arrival_process(env, terminal, arrival_entry):
     mode = arrival_entry["mode"]
     arrival_id = arrival_entry["arrival_id"]
+    batch_size = arrival_entry["batch_size"]
 
-    ctx = ArrivalContext(env, mode, arrival_id)
+    ctx = ArrivalContext(env, mode, arrival_id, batch_size)
     yield env.timeout(arrival_entry["arrival_time"] - env.now)
     print(f"\n[{env.now:.2f}] [{mode}] {ctx} ARRIVED")
 
@@ -482,7 +543,6 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
             return
         ctx.assigned_resource = ("track", track_id)
         print(f"  Train {arrival_id} assigned to track {track_id}")
-
 
     elif mode == "vessel":
         berth_id = yield terminal.berths.get()
@@ -500,7 +560,9 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
     for c in inbound:
         record_event(c, "arrived", env.now)
 
-    env.process(crane_unload_inbound_process(env,terminal,mode,ctx,inbound))
+    env.process(crane_unload_inbound_process(env, terminal, mode, ctx, inbound))
+    env.process(crane_load_outbound_process(env, terminal, ctx))
+    env.process(train_vessel_departure_process(env, terminal, ctx))
 
 
 def truck_arrival_process(env, terminal, arrival_entry):
@@ -518,10 +580,27 @@ def truck_arrival_process(env, terminal, arrival_entry):
         yield env.timeout(terminal.TRUCK_INGATE_TIME)
 
     yield terminal.container_stack.put(container)
+    record_event(container, "arrived", env.now)
     yield terminal.truck_pool.put(truck)
     truck_ctx.ic_dropped.succeed()
 
     return truck_ctx
+
+
+def train_vessel_departure_process(env, terminal, ctx):
+    yield ctx.oc_loaded
+
+    ctx.departed.succeed()
+    print(f"[{env.now:.2f}] {ctx} DEPARTED")
+
+    for c in ctx.loaded_containers:
+        record_event(c, "departure", env.now)
+
+    resource_type, resource_id = ctx.assigned_resource
+    if resource_type == "track":
+        yield terminal.tracks.put(resource_id)
+    elif resource_type == "berth":
+        yield terminal.berths.put(resource_id)
 
 
 def export_container_events_to_three_csvs(filepath, prefix):
