@@ -9,7 +9,6 @@ import os
 input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
 container_events = {}
 
-
 @dataclass
 class Container:
     id: int
@@ -405,7 +404,6 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     if ic.destination_mode == "truck":
         truck = yield terminal.truck_pool.get()
         ic.destination_id = truck.id
-        # print(f"[TRUCK] [{env.now}] {truck.id} -> {ic}")
         travel_time_to_gate = 0.01
         yield env.timeout(travel_time_to_gate)
         record_event(ic, "departure", env.now)
@@ -419,7 +417,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     oc.destination_id = ic.origin_id
     record_event(oc, "hostler_pick_up_OC", env.now)
 
-    # 6. move OC back to chassis and
+    # 6. move OC back to chassis
     yield env.timeout(chassis_stack_travel_time)
     yield chassis_store.put(oc)
     record_event(oc, "hostler_drop_off_OC", env.now)
