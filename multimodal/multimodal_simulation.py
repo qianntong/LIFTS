@@ -58,6 +58,10 @@ class Terminal:
         yard_cfg = config["yard"]
         term_cfg = config["terminal"]
         gate_cfg = config["gates"]
+        simul_cfg = config["simulation"]
+
+        self.analyze_start = simul_cfg["analyze_start"]
+        self.analyze_end = simul_cfg["analyze_end"]
 
         self.yard_type = yard_cfg["yard_type"]
         self.receiving_track_numbers = int(yard_cfg["receiving_track_numbers"])
@@ -212,7 +216,7 @@ def normalize_container_events(container_events):
     Normalize container event records by consolidating lifecycle updates.
 
     Container identity is defined by:
-        (origin_mode, origin_id, destination_mode, container_index)
+        (origin_mode, origin_id, destination_mode, container_id)
 
     destination_id is treated as a lifecycle attribute and may be updated
     over time without creating a new container record.
@@ -230,7 +234,7 @@ def normalize_container_events(container_events):
                 "origin_id": origin_id,
                 "destination_mode": dest_mode,
                 "destination_id": None,
-                "container_index": index,
+                "container_id": index,
                 "timeline": {}
             }
 
@@ -393,12 +397,12 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     park_chassis_travel_time = 0
     yield env.timeout(park_chassis_travel_time)
     yield chassis_store.get(lambda c: c == ic)
-    record_event(ic, "hostler_pick_up_IC", env.now)
+    record_event(ic, "hostler_IC_pick_up", env.now)
 
     # 3. move IC to stack
     chassis_stack_travel_time = 0
     yield env.timeout(chassis_stack_travel_time)
-    record_event(ic, "hostler_drop_off_IC", env.now)
+    record_event(ic, "hostler_IC_drop_off", env.now)
 
     # 4. IC dropped and picked up by trucks
     if ic.destination_mode == "truck":
@@ -415,12 +419,12 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     # 5. find OC and bind destination
     oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
     oc.destination_id = ic.origin_id
-    record_event(oc, "hostler_pick_up_OC", env.now)
+    record_event(oc, "hostler_OC_pick_up", env.now)
 
     # 6. move OC back to chassis
     yield env.timeout(chassis_stack_travel_time)
     yield chassis_store.put(oc)
-    record_event(oc, "hostler_drop_off_OC", env.now)
+    record_event(oc, "hostler_OC_drop_off", env.now)
 
     # 7. release hostler
     yield terminal.hostler_pool.put(hostler)
@@ -461,7 +465,7 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
 
         unload_time = 0.02
         yield env.timeout(unload_time)
-        record_event(container, "chassis_unload", env.now)
+        record_event(container, "chassis_IC_unload", env.now)
 
         yield chassis_store.put(container)
         yield crane_pool.put(crane)
@@ -508,7 +512,7 @@ def crane_load_outbound_process(env, terminal, ctx):
 
         load_time = 0.02
         yield env.timeout(load_time)
-        record_event(oc, "chassis_load", env.now)
+        record_event(oc, "chassis_OC_load", env.now)
         ctx.loaded_containers.append(oc)
 
         yield crane_pool.put(crane)
@@ -556,7 +560,8 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
     inbound = [c for c in containers if c.origin_mode == mode]
 
     for c in inbound:
-        record_event(c, "arrived", env.now)
+        record_event(c, "arrival_expected", arrival_entry["arrival_time"])
+        record_event(c, "arrival_actual", env.now)
 
     env.process(crane_unload_inbound_process(env, terminal, mode, ctx, inbound))
     env.process(crane_load_outbound_process(env, terminal, ctx))
@@ -578,7 +583,8 @@ def truck_arrival_process(env, terminal, arrival_entry):
         yield env.timeout(terminal.TRUCK_INGATE_TIME)
 
     yield terminal.container_stack.put(container)
-    record_event(container, "arrived", env.now)
+    record_event(container, "arrival_actual", env.now)
+    record_event(container, "arrival_expected", arrival_entry["arrival_time"])
     yield terminal.truck_pool.put(truck)
     truck_ctx.ic_dropped.succeed()
 
@@ -615,7 +621,7 @@ def export_container_events_to_three_csvs(filepath, prefix):
         "origin_id",
         "destination_mode",
         "destination_id",
-        "container_index"
+        "container_id"
     ]
 
     header = base_columns + all_events
@@ -663,18 +669,16 @@ def export_container_events_to_three_csvs(filepath, prefix):
         f.close()
 
 
-
 def main():
     random.seed(42)
     env = simpy.Environment()
 
     input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
     config = load_config(input_config_yaml)
+    output_dir = "output/ContainerLog/"
 
     terminal = Terminal(env, config)
     timetable = generate_timetable(config)
-
-    print(f"[Timetable] {len(timetable)} arrivals")
 
     for entry in timetable:
         if entry["mode"] in ["train", "vessel"]:
@@ -685,7 +689,7 @@ def main():
     sim_length = min(config["simulation"]["length"],500)
     env.run(until=sim_length)
 
-    export_container_events_to_three_csvs("output/ContainerLog/", None)
+    export_container_events_to_three_csvs(output_dir, None)
     print("Simulation finished. Results saved!")
 
 
