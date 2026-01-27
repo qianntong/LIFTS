@@ -1,0 +1,75 @@
+simulation:
+  length: 504           # total of 3-weeks; 24*21=504
+  analyze_start: 168    # beg of week 2; 24*7=168
+  analyze_end: 24*14    # end of week 2; 24*14=336
+timetable:
+  vessel:
+    enabled: true         # false to disable mode generation (i.e. intermodal terminal)
+    headway: 168          # hours (e.g. every 24*7)
+    batch_size: 1000
+    destination_split:
+      train: 0.5
+      truck: 0.5
+  train:
+    enabled: true
+    headway: 12           # hours (e.g. every-half day)
+    batch_size: 100
+    destination_split:
+      vessel: 0.5
+      truck: 0.5
+  truck:
+    enabled: true
+    headway: 0.05       # oc prepared
+    batch_size: 1         # single-stacked
+    destination_split:
+      vessel: 0.5
+      train: 0.5
+terminal:                 # terminal resources
+  cranes_per_berth: 12
+  cranes_per_track: 4
+  hostler_number: 10000
+  hostler_diesel_percentage: 1
+yard:
+  yard_type: parallel
+  berth_number: 3
+  track_number: 100
+  receiving_track_numbers: 10
+  railcar_length: 60
+  d_f: 15
+  d_x: 15
+gates:
+  in_gate_numbers: 500
+  out_gate_numbers: 500
+layout:
+  file_path: input/layout.xlsx
+  mode: adaptive
+  M: 5
+  N: 5
+  n_t: 2
+  n_p: 2
+  n_r: 20
+emissions:
+  load_consumption:
+    crane_loaded:
+      Diesel: 2.6
+      Hybrid: 9.04
+    crane_idle:
+      Diesel: 1.2
+      Hybrid: 0.4
+  trip_consumption:
+    hostler_empty:
+      Diesel: 1.11
+      Electric: 2.78
+    hostler_loaded:
+      Diesel: 1.94
+      Electric: 3.66
+    truck_empty:
+      Diesel: 1.11
+      Electric: 2.68
+    truck_loaded:
+      Diesel: 1.94
+      Electric: 3.66
+  side_pick_consumption:
+    side:
+      Diesel: 2.88
+      Electric: 0.21

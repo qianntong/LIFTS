@@ -6,7 +6,6 @@ import simpy
 import csv
 import os
 
-input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
 container_events = {}
 
 @dataclass
@@ -669,29 +668,29 @@ def export_container_events_to_three_csvs(filepath, prefix):
         f.close()
 
 
-def main():
-    random.seed(42)
-    env = simpy.Environment()
-
-    input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
-    config = load_config(input_config_yaml)
-    output_dir = "output/ContainerLog/"
-
-    terminal = Terminal(env, config)
-    timetable = generate_timetable(config)
-
-    for entry in timetable:
-        if entry["mode"] in ["train", "vessel"]:
-            env.process(train_vessel_arrival_process(env, terminal, entry))
-        elif entry["mode"] == "truck":
-            env.process(truck_arrival_process(env, terminal, entry))
-
-    sim_length = min(config["simulation"]["length"],500)
-    env.run(until=sim_length)
-
-    export_container_events_to_three_csvs(output_dir, None)
-    print("Simulation finished. Results saved!")
-
-
-if __name__ == "__main__":
-    main()
+# def main():
+#     random.seed(42)
+#     env = simpy.Environment()
+#
+#     input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
+#     config = load_config(input_config_yaml)
+#     output_dir = "output/ContainerLog/"
+#
+#     terminal = Terminal(env, config)
+#     timetable = generate_timetable(config)
+#
+#     for entry in timetable:
+#         if entry["mode"] in ["train", "vessel"]:
+#             env.process(train_vessel_arrival_process(env, terminal, entry))
+#         elif entry["mode"] == "truck":
+#             env.process(truck_arrival_process(env, terminal, entry))
+#
+#     sim_length = min(config["simulation"]["length"],500)
+#     env.run(until=sim_length)
+#
+#     export_container_events_to_three_csvs(output_dir, None)
+#     print("Simulation finished. Results saved!")
+#
+#
+# if __name__ == "__main__":
+#     main()
