@@ -1,9 +1,7 @@
 import os
 import csv
-import uuid
 import copy
 import yaml
-
 from multimodal_simulation import load_config
 from multimodal_runner import run_experiment
 
