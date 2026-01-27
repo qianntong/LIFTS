@@ -21,50 +21,79 @@ def deep_merge(base, override):
     return result
 
 
-def generate_overrides(sim_length):
+def generate_overrides():
     """
-    Experiment design:
-      - Vessel: 1 vessel every 7 days, batch size 1000
-      - Train / Truck trade-off:
-            (10 trains, 0 trucks),
-            (9 trains, 100 trucks),
-            (8 trains, 200 trucks), ...
-    """
-    vessel_headway = 7 * 24  # hours
-    base_train_count = 10
+    Headway is defined by arrivals per 7 days (168 hours), not by total sim length.
 
-    for n_train in range(base_train_count, -1, -1):
-        n_truck = (base_train_count - n_train) * 100
+    Simulation length = 504 hours = 3 weeks
+    So a mode with headway=168 will arrive 3 times in the simulation.
+    """
+
+    WEEK_HOURS = 7 * 24  # 168
+
+    vessel_batch_size = 1000
+    train_batch_size = 100
+    truck_batch_size = 1
+
+    vessel_per_week = 1  # fixed: 1 vessel per 168h
+    vessel_headway = WEEK_HOURS / vessel_per_week  # = 168
+
+    # 10 trains per week baseline, then trade for trucks
+    base_trains_per_week = 10
+
+    for trains_per_week in [10, 9, 8]:
+        trucks_per_week = (base_trains_per_week - trains_per_week) * 100  # 0, 100, 200 ...
+
+        # volumes within ONE week window (168h)
+        V_vessel = vessel_per_week * vessel_batch_size
+        V_train = trains_per_week * train_batch_size
+        V_truck = trucks_per_week * truck_batch_size
+
+        def safe_split(a, b):
+            s = a + b
+            if s <= 0:
+                return 0.5, 0.5
+            return a / s, b / s
+
+        # destination splits (each origin splits to the other two modes)
+        p_train_from_vessel, p_truck_from_vessel = safe_split(V_train, V_truck)
+        p_vessel_from_train, p_truck_from_train = safe_split(V_vessel, V_truck)
+        p_vessel_from_truck, p_train_from_truck = safe_split(V_vessel, V_train)
 
         override = {
             "timetable": {
                 "vessel": {
                     "enabled": True,
-                    "headway": vessel_headway,
-                    "batch_size": 1000,
-                }
+                    "headway": vessel_headway,        # 168
+                    "batch_size": vessel_batch_size,  # 1000
+                    "destination_split": {
+                        "train": p_train_from_vessel,
+                        "truck": p_truck_from_vessel,
+                    },
+                },
+                "train": {
+                    "enabled": True,
+                    "headway": WEEK_HOURS / max(trains_per_week, 1),
+                    "batch_size": train_batch_size,
+                    "destination_split": {
+                        "vessel": p_vessel_from_train,
+                        "truck": p_truck_from_train,
+                    },
+                },
+                "truck": {
+                    "enabled": True,
+                    "headway": 0.05,
+                    "batch_size": truck_batch_size,
+                    "destination_split": {
+                        "vessel": p_vessel_from_truck,
+                        "train": p_train_from_truck,
+                    },
+                },
             }
         }
 
-        if n_train > 0:
-            override["timetable"]["train"] = {
-                "enabled": True,
-                "headway": sim_length / n_train,
-                "batch_size": 100,
-            }
-        else:
-            override["timetable"]["train"] = {"enabled": False}
-
-        if n_truck > 0:
-            override["timetable"]["truck"] = {
-                "enabled": True,
-                "headway": sim_length / n_truck,
-                "batch_size": 1,
-            }
-        else:
-            override["timetable"]["truck"] = {"enabled": False}
-
         yield override
+
 
 
 def flatten_metrics_to_row(run_meta, override, metrics):
@@ -110,7 +139,7 @@ def main():
     with open(global_csv_path, "a", newline="") as global_f:
         global_writer = None
 
-        for run_idx, override in enumerate(generate_overrides(sim_length)):
+        for run_idx, override in enumerate(generate_overrides()):
             run_name = f"run_{run_idx:03d}"
             run_dir = os.path.join(runs_root, run_name)
             os.makedirs(run_dir, exist_ok=True)
