@@ -607,8 +607,16 @@ def train_vessel_departure_process(env, terminal, ctx):
 
 
 def export_container_events_to_three_csvs(filepath, prefix):
+    """
+    Export container events to three CSVs (train / vessel / truck),
+    AND return standardized per-container metrics for downstream statistics.
+    """
+
     normalized_events = normalize_container_events(container_events)
 
+    # -------------------------------------------------
+    # Collect all event names
+    # -------------------------------------------------
     all_events = sorted({
         event
         for info in normalized_events.values()
@@ -636,26 +644,39 @@ def export_container_events_to_three_csvs(filepath, prefix):
         for mode, f in files.items()
     }
 
-    # write headers
+    # -------------------------------------------------
+    # Write headers
+    # -------------------------------------------------
     for writer in writers.values():
         writer.writerow(header)
 
-    # write rows
+    # -------------------------------------------------
+    # Prepare standardized metrics output
+    # -------------------------------------------------
+    container_metrics = {}
+
+    # -------------------------------------------------
+    # Write rows + extract metrics
+    # -------------------------------------------------
     for key, info in normalized_events.items():
         origin_mode, origin_id, dest_mode, index = key
 
         if origin_mode not in writers:
             continue
 
+        destination_id = info.get("destination_id")
+        timeline = info["timeline"]
+
+        # -----------------------------
+        # CSV row
+        # -----------------------------
         row = [
             origin_mode,
             origin_id,
             dest_mode,
-            info["destination_id"],
+            destination_id,
             index
         ]
-
-        timeline = info["timeline"]
 
         for event in all_events:
             row.append(
@@ -664,8 +685,44 @@ def export_container_events_to_three_csvs(filepath, prefix):
 
         writers[origin_mode].writerow(row)
 
+        # -----------------------------
+        # Standardized metrics extraction
+        # -----------------------------
+        arrival_actual = None
+        arrival_expected = None
+        departure = None
+
+        if "arrival_actual" in timeline:
+            arrival_actual = timeline["arrival_actual"].get("time")
+
+        if "arrival_expected" in timeline:
+            arrival_expected = timeline["arrival_expected"].get("time")
+
+        # departure: take the LAST depart/exit-like event
+        for event, ev_info in timeline.items():
+            if "depart" in event or "exit" in event:
+                t = ev_info.get("time")
+                if t is not None:
+                    departure = t
+
+        container_metrics[index] = {
+            "origin_mode": origin_mode,
+            "origin_id": origin_id,
+            "destination_mode": dest_mode,
+            "destination_id": destination_id,
+            "arrival_actual": arrival_actual,
+            "arrival_expected": arrival_expected,
+            "departure": departure,
+        }
+
+    # -------------------------------------------------
+    # Close files
+    # -------------------------------------------------
     for f in files.values():
         f.close()
+
+    return container_metrics
+
 
 
 # def main():
@@ -688,6 +745,7 @@ def export_container_events_to_three_csvs(filepath, prefix):
 #     sim_length = min(config["simulation"]["length"],500)
 #     env.run(until=sim_length)
 #
+#     # print("container events:",container_events)
 #     export_container_events_to_three_csvs(output_dir, None)
 #     print("Simulation finished. Results saved!")
 #

@@ -1,7 +1,7 @@
 simulation:
   length: 504           # total of 3-weeks; 24*21=504
   analyze_start: 168    # beg of week 2; 24*7=168
-  analyze_end: 24*14    # end of week 2; 24*14=336
+  analyze_end: 336    # end of week 2; 24*14=336
 timetable:
   vessel:
     enabled: true         # false to disable mode generation (i.e. intermodal terminal)

@@ -1,6 +1,28 @@
 import numpy as np
 from collections import defaultdict
 
+def _normalize_container_metrics(container_events):
+    """
+    Ensure all time-related fields are float or None.
+    """
+    normalized = {}
+
+    for cid, info in container_events.items():
+        new_info = info.copy()
+
+        for key in ["arrival_actual", "arrival_expected", "departure"]:
+            val = new_info.get(key)
+            if val is None:
+                continue
+            try:
+                new_info[key] = float(val)
+            except Exception:
+                new_info[key] = None
+
+        normalized[cid] = new_info
+
+    return normalized
+
 
 def compute_all_metrics(container_events, analyze_start, analyze_end):
     """
@@ -11,11 +33,22 @@ def compute_all_metrics(container_events, analyze_start, analyze_end):
     - OC processing time stats (destination_mode == mode)
     - delay time stats (arrival_actual - arrival_expected)
     """
-
+    analyze_start = float(analyze_start)
+    analyze_end = float(analyze_end)
+    container_events = _normalize_container_metrics(container_events)
     events = _filter_events(container_events, analyze_start, analyze_end)
-    mode_stats = _compute_mode_level(events)
+    mode_stats = _compute_mode_combo_level(events)
 
     return mode_stats
+
+
+def _safe_float(x):
+    try:
+        if x is None or x == "":
+            return None
+        return float(x)
+    except Exception:
+        return None
 
 
 def _filter_events(container_events, analyze_start, analyze_end):
@@ -38,71 +71,76 @@ def _filter_events(container_events, analyze_start, analyze_end):
     return result
 
 
-def _compute_mode_level(events):
+def _compute_mode_combo_level(events):
     """
-    Aggregate statistics directly at mode level:
-    train / truck / vessel
+    Aggregate statistics at (origin_mode, destination_mode) level.
 
-    For each mode:
-    - IC processing time: containers with origin_mode == mode
-    - OC processing time: containers with destination_mode == mode
-    - Delay time: arrival-side delay for this mode
+    Valid combinations:
+        origin_mode ∈ {train, truck, vessel}
+        destination_mode ∈ {train, truck, vessel}
+        origin_mode != destination_mode
+
+    For each (origin, destination):
+        - Average Container Processing Time = departure - arrival_actual
+        - Delay Time = arrival_actual - arrival_expected
+          (only for train / vessel arrivals)
     """
 
     buckets = defaultdict(lambda: {
-        "IC_processing": [],
-        "OC_processing": [],
-        "delay": [],
+        "processing": [],
+        "delay": []
     })
 
     for info in events.values():
         origin_mode = info.get("origin_mode")
         dest_mode = info.get("destination_mode")
 
+        # must be valid O-D combos
+        if (
+            origin_mode is None or
+            dest_mode is None or
+            origin_mode == dest_mode
+        ):
+            continue
+
         arrival_actual = info.get("arrival_actual")
         departure = info.get("departure")
         arrival_expected = info.get("arrival_expected")
 
-        # IC processing time (by origin mode)
-        if (
-            origin_mode is not None
-            and departure is not None
-            and np.isfinite(departure)
-        ):
-            ic_time = departure - arrival_actual
-            if np.isfinite(ic_time):
-                buckets[origin_mode]["IC_processing"].append(ic_time)
+        key = (origin_mode, dest_mode)
 
-        # OC processing time (by destination mode)
+        # 1) Processing time
         if (
-            dest_mode is not None
-            and departure is not None
-            and np.isfinite(departure)
+            arrival_actual is not None and
+            departure is not None and
+            np.isfinite(arrival_actual) and
+            np.isfinite(departure)
         ):
-            oc_time = departure - arrival_actual
-            if np.isfinite(oc_time):
-                buckets[dest_mode]["OC_processing"].append(oc_time)
+            processing_time = departure - arrival_actual
+            if np.isfinite(processing_time):
+                buckets[key]["processing"].append(processing_time)
 
-        # Delay time (arrival-side, by mode)
+        # 2) Delay time (arrival-side, only train / vessel)
         if (
-            origin_mode is not None
-            and arrival_expected is not None
-            and np.isfinite(arrival_expected)
+            origin_mode in {"train", "vessel"} and
+            arrival_actual is not None and
+            arrival_expected is not None and
+            np.isfinite(arrival_actual) and
+            np.isfinite(arrival_expected)
         ):
             delay = arrival_actual - arrival_expected
             if np.isfinite(delay):
-                buckets[origin_mode]["delay"].append(delay)
+                buckets[key]["delay"].append(delay)
 
-    # Summarize per mode
-    mode_stats = {}
-    for mode, b in buckets.items():
-        mode_stats[mode] = {
-            "IC_processing_time": _summarize_list(b["IC_processing"]),
-            "OC_processing_time": _summarize_list(b["OC_processing"]),
+    # summarize
+    combo_stats = {}
+    for (origin, dest), b in buckets.items():
+        combo_stats[(origin, dest)] = {
+            "avg_container_processing_time": _summarize_list(b["processing"]),
             "delay_time": _summarize_list(b["delay"]),
         }
 
-    return mode_stats
+    return combo_stats
 
 
 def _summarize_list(values):

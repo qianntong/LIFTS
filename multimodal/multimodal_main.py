@@ -24,7 +24,7 @@ def generate_overrides():
     Headway is defined by arrivals per 7 days (168 hours), not by total sim length.
 
     Simulation length = 504 hours = 3 weeks
-    So a mode with headway=168 will arrive 3 times in the simulation.
+
     """
 
     WEEK_HOURS = 7 * 24  # 168
@@ -39,7 +39,7 @@ def generate_overrides():
     # 10 trains per week baseline, then trade for trucks
     base_trains_per_week = 10
 
-    for trains_per_week in [10, 9, 8]:
+    for trains_per_week in [9]:    # change # of trains
         trucks_per_week = (base_trains_per_week - trains_per_week) * 100  # 0, 100, 200 ...
 
         # volumes within ONE week window (168h)
@@ -94,26 +94,43 @@ def generate_overrides():
 
 
 
-def flatten_metrics_to_row(run_meta, override, metrics):
+def flatten_metrics_to_row(run_meta, override, metrics, config_snapshot):
     """
     Flatten one run into a single CSV row.
     """
+
     row = {}
 
     # ---- metadata ----
     for k, v in run_meta.items():
         row[k] = v
 
-    # ---- inputs (timetable only, explicit & stable) ----
+    # ---- timetable inputs ----
     for mode in ["train", "truck", "vessel"]:
         cfg = override.get("timetable", {}).get(mode, {})
         row[f"{mode}_enabled"] = cfg.get("enabled", False)
         row[f"{mode}_headway"] = cfg.get("headway")
         row[f"{mode}_batch_size"] = cfg.get("batch_size")
 
+        dest_split = cfg.get("destination_split", {})
+        for dest_mode, p in dest_split.items():
+            row[f"{mode}_to_{dest_mode}_share"] = p
+
+    # ---- terminal resources ----
+    terminal_cfg = config_snapshot.get("terminal", {})
+    row["cranes_per_berth"] = terminal_cfg.get("cranes_per_berth")
+    row["cranes_per_track"] = terminal_cfg.get("cranes_per_track")
+    row["hostler_number"] = terminal_cfg.get("hostler_number")
+    row["hostler_diesel_percentage"] = terminal_cfg.get("hostler_diesel_percentage")
+
+    # ---- yard parameters ----
+    yard_cfg = config_snapshot.get("yard", {})
+    row["berth_number"] = yard_cfg.get("berth_number")
+    row["track_number"] = yard_cfg.get("track_number")
+
     # ---- outputs (mode-level statistics) ----
-    mode_level = metrics.get("mode_level", {})
-    for mode, stat in mode_level.items():
+    for mode in ["train", "truck", "vessel"]:
+        stat = metrics.get(mode, {})
         for metric_name, stat_dict in stat.items():
             for stat_name, value in stat_dict.items():
                 row[f"{mode}.{metric_name}.{stat_name}"] = value
@@ -130,7 +147,6 @@ def main():
     os.makedirs(os.path.dirname(global_csv_path), exist_ok=True)
 
     base_config = load_config(base_config_path)
-    sim_length = base_config["simulation"]["length"]
 
     write_header = not os.path.exists(global_csv_path)
 
@@ -138,7 +154,7 @@ def main():
         global_writer = None
 
         for run_idx, override in enumerate(generate_overrides()):
-            run_name = f"run_{run_idx:03d}"
+            run_name = f"run_{run_idx:05d}"
             run_dir = os.path.join(runs_root, run_name)
             os.makedirs(run_dir, exist_ok=True)
 
@@ -149,10 +165,10 @@ def main():
             with open(os.path.join(run_dir, "config_snapshot.yaml"), "w") as f:
                 yaml.safe_dump(config_snapshot, f, sort_keys=False)
 
-            # ---- run experiment (simulation + staged outputs) ----
+            # ---- run experiment ----
             result = run_experiment(
                 config_snapshot=config_snapshot,
-                random_seed=1000 + run_idx,
+                run_id=run_idx,
                 run_dir=run_dir,
             )
 
@@ -160,7 +176,8 @@ def main():
             metrics = result["metrics"]
 
             # ---- flatten & append global CSV ----
-            row = flatten_metrics_to_row(run_meta, override, metrics)
+            row = flatten_metrics_to_row(run_meta, override, metrics, config_snapshot)
+
 
             if global_writer is None:
                 global_writer = csv.DictWriter(global_f, fieldnames=row.keys())
@@ -178,6 +195,7 @@ def main():
             )
 
     print("Finished all runs.")
+
 
 
 if __name__ == "__main__":
