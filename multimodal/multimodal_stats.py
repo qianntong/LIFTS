@@ -25,14 +25,6 @@ def _normalize_container_metrics(container_events):
 
 
 def compute_all_metrics(container_events, analyze_start, analyze_end):
-    """
-    Final statistics:
-    One simulation -> 3 rows (train / truck / vessel)
-    Each row contains:
-    - IC processing time stats (origin_mode == mode)
-    - OC processing time stats (destination_mode == mode)
-    - delay time stats (arrival_actual - arrival_expected)
-    """
     analyze_start = float(analyze_start)
     analyze_end = float(analyze_end)
     container_events = _normalize_container_metrics(container_events)
@@ -141,6 +133,19 @@ def _compute_mode_combo_level(events):
         }
 
     return combo_stats
+
+
+def flatten_mode_combo_stats(mode_combo_stats):
+    flat = {}
+
+    for (orig, dest), metrics in mode_combo_stats.items():
+        prefix = f"{orig}_to_{dest}"
+        for metric_name, stat_dict in metrics.items():
+            for stat, value in stat_dict.items():
+                col = f"{prefix}__{metric_name}__{stat}"
+                flat[col] = value
+
+    return flat
 
 
 def _summarize_list(values):

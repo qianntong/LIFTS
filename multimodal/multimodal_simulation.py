@@ -611,12 +611,8 @@ def export_container_events_to_three_csvs(filepath, prefix):
     Export container events to three CSVs (train / vessel / truck),
     AND return standardized per-container metrics for downstream statistics.
     """
-
     normalized_events = normalize_container_events(container_events)
 
-    # -------------------------------------------------
-    # Collect all event names
-    # -------------------------------------------------
     all_events = sorted({
         event
         for info in normalized_events.values()
@@ -644,22 +640,17 @@ def export_container_events_to_three_csvs(filepath, prefix):
         for mode, f in files.items()
     }
 
-    # -------------------------------------------------
-    # Write headers
-    # -------------------------------------------------
     for writer in writers.values():
         writer.writerow(header)
 
-    # -------------------------------------------------
-    # Prepare standardized metrics output
-    # -------------------------------------------------
     container_metrics = {}
 
-    # -------------------------------------------------
-    # Write rows + extract metrics
-    # -------------------------------------------------
     for key, info in normalized_events.items():
         origin_mode, origin_id, dest_mode, index = key
+
+        # Only export OD-complete containers for downstream statistics
+        if origin_mode is None or dest_mode is None or origin_mode == dest_mode:
+            continue
 
         if origin_mode not in writers:
             continue
@@ -667,9 +658,6 @@ def export_container_events_to_three_csvs(filepath, prefix):
         destination_id = info.get("destination_id")
         timeline = info["timeline"]
 
-        # -----------------------------
-        # CSV row
-        # -----------------------------
         row = [
             origin_mode,
             origin_id,
@@ -685,9 +673,6 @@ def export_container_events_to_three_csvs(filepath, prefix):
 
         writers[origin_mode].writerow(row)
 
-        # -----------------------------
-        # Standardized metrics extraction
-        # -----------------------------
         arrival_actual = None
         arrival_expected = None
         departure = None
@@ -705,7 +690,7 @@ def export_container_events_to_three_csvs(filepath, prefix):
                 if t is not None:
                     departure = t
 
-        container_metrics[index] = {
+        container_metrics[key] = {
             "origin_mode": origin_mode,
             "origin_id": origin_id,
             "destination_mode": dest_mode,
@@ -715,14 +700,10 @@ def export_container_events_to_three_csvs(filepath, prefix):
             "departure": departure,
         }
 
-    # -------------------------------------------------
-    # Close files
-    # -------------------------------------------------
     for f in files.values():
         f.close()
 
     return container_metrics
-
 
 
 # def main():

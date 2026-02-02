@@ -21,10 +21,8 @@ def deep_merge(base, override):
 
 def generate_overrides():
     """
-    Headway is defined by arrivals per 7 days (168 hours), not by total sim length.
-
+    Vessel headway is defined by arrivals per 7 days (168 hours), not by total sim length.
     Simulation length = 504 hours = 3 weeks
-
     """
 
     WEEK_HOURS = 7 * 24  # 168
@@ -93,7 +91,6 @@ def generate_overrides():
         yield override
 
 
-
 def flatten_metrics_to_row(run_meta, override, metrics, config_snapshot):
     """
     Flatten one run into a single CSV row.
@@ -158,15 +155,13 @@ def main():
             run_dir = os.path.join(runs_root, run_name)
             os.makedirs(run_dir, exist_ok=True)
 
-            # ---- build config snapshot ----
             config_snapshot = deep_merge(base_config, override)
 
-            # ---- dump config snapshot ----
             with open(os.path.join(run_dir, "config_snapshot.yaml"), "w") as f:
                 yaml.safe_dump(config_snapshot, f, sort_keys=False)
 
-            # ---- run experiment ----
             result = run_experiment(
+                random_seed=base_config["simulation"]["random_seed"],
                 config_snapshot=config_snapshot,
                 run_id=run_idx,
                 run_dir=run_dir,
@@ -175,9 +170,7 @@ def main():
             run_meta = result["metadata"]
             metrics = result["metrics"]
 
-            # ---- flatten & append global CSV ----
             row = flatten_metrics_to_row(run_meta, override, metrics, config_snapshot)
-
 
             if global_writer is None:
                 global_writer = csv.DictWriter(global_f, fieldnames=row.keys())
@@ -187,15 +180,13 @@ def main():
 
             global_writer.writerow(row)
 
-            print(
-                f"[{run_name}] "
+            print(f"[{run_name}] "
                 f"train_enabled={row.get('train_enabled')} "
                 f"truck_enabled={row.get('truck_enabled')} "
                 f"success={row.get('success')}"
             )
 
     print("Finished all runs.")
-
 
 
 if __name__ == "__main__":
