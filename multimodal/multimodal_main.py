@@ -4,7 +4,7 @@ import copy
 import yaml
 from multimodal_simulation import load_config
 from multimodal_runner import run_experiment
-
+from collections import OrderedDict
 
 def deep_merge(base, override):
     """
@@ -21,8 +21,9 @@ def deep_merge(base, override):
 
 def generate_overrides():
     """
-    Vessel headway is defined by arrivals per 7 days (168 hours), not by total sim length.
-    Simulation length = 504 hours = 3 weeks
+    Control-variable experiment:
+    - Only train frequency changes
+    - Destination split is exogenous and enumerated
     """
 
     WEEK_HOURS = 7 * 24  # 168
@@ -31,77 +32,151 @@ def generate_overrides():
     train_batch_size = 100
     truck_batch_size = 1
 
-    vessel_per_week = 1  # fixed: 1 vessel per 168h
-    vessel_headway = WEEK_HOURS / vessel_per_week  # = 168
+    vessel_per_week = 1
+    vessel_headway = WEEK_HOURS / vessel_per_week  # 168
 
-    # 10 trains per week baseline, then trade for trucks
-    base_trains_per_week = 10
+    SPLIT_GRID = [
+        {
+            "vessel": {"train": 0.4, "truck": 0.6},
+            "train":  {"vessel": 0.4, "truck": 0.6},
+            "truck":  {"vessel": 0.4, "train": 0.6},
+        },
 
-    for trains_per_week in [9]:    # change # of trains
-        trucks_per_week = (base_trains_per_week - trains_per_week) * 100  # 0, 100, 200 ...
+        {
+            "vessel": {"train": 0.5, "truck": 0.5},
+            "train":  {"vessel": 0.5, "truck": 0.5},
+            "truck":  {"vessel": 0.5, "train": 0.5},
+        },
 
-        # volumes within ONE week window (168h)
-        V_vessel = vessel_per_week * vessel_batch_size
-        V_train = trains_per_week * train_batch_size
-        V_truck = trucks_per_week * truck_batch_size
+        {
+            "vessel": {"train": 0.6, "truck": 0.4},
+            "train":  {"vessel": 0.6, "truck": 0.4},
+            "truck":  {"vessel": 0.6, "train": 0.4},
+        },
+    ]
 
-        def safe_split(a, b):
-            s = a + b
-            if s <= 0:
-                return 0.5, 0.5
-            return a / s, b / s
+    # ---- vary train frequency only ----
+    for trains_per_week in range(5, 8):
+        train_headway = WEEK_HOURS / trains_per_week
 
-        # destination splits (each origin splits to the other two modes)
-        p_train_from_vessel, p_truck_from_vessel = safe_split(V_train, V_truck)
-        p_vessel_from_train, p_truck_from_train = safe_split(V_vessel, V_truck)
-        p_vessel_from_truck, p_train_from_truck = safe_split(V_vessel, V_train)
-
-        override = {
-            "timetable": {
-                "vessel": {
-                    "enabled": True,
-                    "headway": vessel_headway,        # 168
-                    "batch_size": vessel_batch_size,  # 1000
-                    "destination_split": {
-                        "train": p_train_from_vessel,
-                        "truck": p_truck_from_vessel,
+        for split in SPLIT_GRID:
+            override = {
+                "timetable": {
+                    "vessel": {
+                        "enabled": True,
+                        "headway": vessel_headway,
+                        "batch_size": vessel_batch_size,
+                        "destination_split": split["vessel"],
                     },
-                },
-                "train": {
-                    "enabled": True,
-                    "headway": WEEK_HOURS / max(trains_per_week, 1),
-                    "batch_size": train_batch_size,
-                    "destination_split": {
-                        "vessel": p_vessel_from_train,
-                        "truck": p_truck_from_train,
+                    "train": {
+                        "enabled": True,
+                        "headway": train_headway,
+                        "batch_size": train_batch_size,
+                        "destination_split": split["train"],
                     },
-                },
-                "truck": {
-                    "enabled": True,
-                    "headway": 0.05,
-                    "batch_size": truck_batch_size,
-                    "destination_split": {
-                        "vessel": p_vessel_from_truck,
-                        "train": p_train_from_truck,
+                    "truck": {
+                        "enabled": True,
+                        "headway": 0.06,  # continuous arrival
+                        "batch_size": truck_batch_size,
+                        "destination_split": split["truck"],
                     },
-                },
+                }
             }
-        }
 
-        yield override
+            yield override
+
+
+
+# def generate_overrides():
+#     """
+#     Vessel headway is defined by arrivals per 7 days (168 hours), not by total sim length.
+#     Simulation length = 504 hours = 3 weeks
+#     """
+#
+#     WEEK_HOURS = 7 * 24  # 168
+#
+#     vessel_batch_size = 1000
+#     train_batch_size = 100
+#     truck_batch_size = 1
+#
+#     vessel_per_week = 1  # fixed: 1 vessel per 168h
+#     vessel_headway = WEEK_HOURS / vessel_per_week  # = 168
+#
+#     # 10 trains per week baseline, then trade for trucks
+#     base_trains_per_week = 10
+#
+#     for trains_per_week in range(1,11,1):    # change # of trains
+#         trucks_per_week = (base_trains_per_week - trains_per_week) * 100  # 0, 100, 200 ...
+#
+#         # volumes within ONE week window (168h)
+#         V_vessel = vessel_per_week * vessel_batch_size
+#         V_train = trains_per_week * train_batch_size
+#         V_truck = trucks_per_week * truck_batch_size
+#
+#         def safe_split(a, b):
+#             s = a + b
+#             if s <= 0:
+#                 return 0.5, 0.5
+#             return a / s, b / s
+#
+#         # destination splits (each origin splits to the other two modes)
+#         p_train_from_vessel, p_truck_from_vessel = safe_split(V_train, V_truck)
+#         p_vessel_from_train, p_truck_from_train = safe_split(V_vessel, V_truck)
+#         p_vessel_from_truck, p_train_from_truck = safe_split(V_vessel, V_train)
+#
+#         override = {
+#             "timetable": {
+#                 "vessel": {
+#                     "enabled": True,
+#                     "headway": vessel_headway,        # 168
+#                     "batch_size": vessel_batch_size,  # 1000
+#                     "destination_split": {
+#                         "train": p_train_from_vessel,
+#                         "truck": p_truck_from_vessel,
+#                     },
+#                 },
+#                 "train": {
+#                     "enabled": True,
+#                     "headway": WEEK_HOURS / max(trains_per_week, 1),
+#                     "batch_size": train_batch_size,
+#                     "destination_split": {
+#                         "vessel": p_vessel_from_train,
+#                         "truck": p_truck_from_train,
+#                     },
+#                 },
+#                 "truck": {
+#                     "enabled": True,
+#                     "headway": 0.06, # not applicable bc waiting for OC: WEEK_HOURS / max(trucks_per_week, 1),
+#                     "batch_size": truck_batch_size,
+#                     "destination_split": {
+#                         "vessel": p_vessel_from_truck,
+#                         "train": p_train_from_truck,
+#                     },
+#                 },
+#             }
+#         }
+#
+#         yield override
 
 
 def flatten_metrics_to_row(run_meta, override, metrics, config_snapshot):
     """
     Flatten one run into a single CSV row.
+
+    Column order:
+      1) metadata
+      2) input parameters
+      3) OD-combo output metrics
     """
 
-    row = {}
+    row = OrderedDict()
 
-    # ---- metadata ----
-    for k, v in run_meta.items():
-        row[k] = v
+    # 1) METADATA
+    for k in ["random_seed", "run_id", "run_time_sec", "success", "error_message"]:
+        if k in run_meta:
+            row[k] = run_meta[k]
 
+    # 2) INPUT PARAMETERS
     # ---- timetable inputs ----
     for mode in ["train", "truck", "vessel"]:
         cfg = override.get("timetable", {}).get(mode, {})
@@ -125,12 +200,47 @@ def flatten_metrics_to_row(run_meta, override, metrics, config_snapshot):
     row["berth_number"] = yard_cfg.get("berth_number")
     row["track_number"] = yard_cfg.get("track_number")
 
-    # ---- outputs (mode-level statistics) ----
-    for mode in ["train", "truck", "vessel"]:
-        stat = metrics.get(mode, {})
-        for metric_name, stat_dict in stat.items():
+    # 3) OUTPUTS: OD-COMBO
+    MODES = ["train", "truck", "vessel"]
+    METRICS = ["avg_container_processing_time", "delay_time"]
+    STATS = ["count", "min", "max", "mean", "std"]
+
+    # 3.1 OD-metric × stat
+    for orig in MODES:
+        for dest in MODES:
+            if orig == dest:
+                continue
+            prefix = f"{orig}_to_{dest}"
+            for metric_name in METRICS:
+                for stat_name in STATS:
+                    col = f"{prefix}.{metric_name}.{stat_name}"
+                    row[col] = None
+
+    # 3.2 current metrics filling
+    # metrics: {(orig, dest): {metric_name: {stat: value}}}
+    for key, metric_block in metrics.items():
+        if not (isinstance(key, tuple) and len(key) == 2):
+            continue
+
+        orig, dest = key
+        if orig == dest:
+            continue
+
+        if not isinstance(metric_block, dict):
+            continue
+
+        for metric_name, stat_dict in metric_block.items():
+            if metric_name not in METRICS:
+                continue
+            if not isinstance(stat_dict, dict):
+                continue
+
             for stat_name, value in stat_dict.items():
-                row[f"{mode}.{metric_name}.{stat_name}"] = value
+                if stat_name not in STATS:
+                    continue
+
+                col = f"{orig}_to_{dest}.{metric_name}.{stat_name}"
+                row[col] = value
 
     return row
 
