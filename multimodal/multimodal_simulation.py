@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from typing import Optional
-import random
-import yaml
 import simpy
 import csv
 import os
+import time
+from multimodal_timetable import *
 
 container_events = {}
+
 
 @dataclass
 class Container:
@@ -135,8 +136,11 @@ class Terminal:
             self.hostler_pool.put(h)
 
         self.truck_pool = simpy.Store(env, capacity=10**6)
+
+        # Single physical stack (FIFO). Holds both prestaged inventory and newly unloaded containers.
+        # NOTE: We deliberately use simpy.Store (not FilterStore) to preserve FIFO order under conditional picks.
         self.container_stack = simpy.FilterStore(env, capacity=10**6)
-        self.container_stack_buffer = simpy.FilterStore(env, capacity=10**6)
+
         self.trackside_chassis = simpy.FilterStore(env, capacity=10**6)
         self.berthside_chassis = simpy.FilterStore(env, capacity=10**6)
 
@@ -178,7 +182,7 @@ class ArrivalContext:
 
     def is_outbound(self, container) -> bool:
         return (container.destination_mode == self.mode
-            and container.destination_id == self.id)
+                and container.destination_id == self.id)
 
     def __str__(self):
         return f"{self.mode.capitalize()}-{self.id}"
@@ -210,6 +214,31 @@ def load_config(path):
         return yaml.safe_load(f)
 
 
+def record_event(container, event, time, extra=None):
+    key = (
+        container.origin_mode,
+        container.origin_id,
+        container.destination_mode,
+        container.destination_id,
+        container.id
+    )
+
+    if key not in container_events:
+        container_events[key] = {
+            "origin_mode": container.origin_mode,
+            "origin_id": container.origin_id,
+            "destination_mode": container.destination_mode,
+            "destination_id": container.destination_id,
+            "index": container.id,
+            "timeline": {}
+        }
+
+    container_events[key]["timeline"][event] = {
+        "time": time,
+        **(extra or {})
+    }
+
+
 def normalize_container_events(container_events):
     """
     Normalize container event records by consolidating lifecycle updates.
@@ -237,125 +266,20 @@ def normalize_container_events(container_events):
                 "timeline": {}
             }
 
-        for event, data in info["timeline"].items():
-            normalized[norm_key]["timeline"][event] = data
-
         if dest_id is not None:
             normalized[norm_key]["destination_id"] = dest_id
 
+        # Merge timelines (keep latest timestamp per event if collision)
+        for event, ev_info in info.get("timeline", {}).items():
+            if event not in normalized[norm_key]["timeline"]:
+                normalized[norm_key]["timeline"][event] = ev_info
+            else:
+                old_t = normalized[norm_key]["timeline"][event].get("time")
+                new_t = ev_info.get("time")
+                if old_t is None or (new_t is not None and new_t > old_t):
+                    normalized[norm_key]["timeline"][event] = ev_info
+
     return normalized
-
-
-def record_event(container, event, time, extra=None):
-    key = (
-        container.origin_mode,
-        container.origin_id,
-        container.destination_mode,
-        container.destination_id,
-        container.id
-    )
-
-    if key not in container_events:
-        container_events[key] = {
-            "origin_mode": container.origin_mode,
-            "origin_id": container.origin_id,
-            "destination_mode": container.destination_mode,
-            "destination_id": container.destination_id,
-            "index": container.id,
-            "timeline": {}
-        }
-
-    container_events[key]["timeline"][event] = {
-        "time": time,
-        **(extra or {})
-    }
-
-
-def generate_timetable(config):
-    sim_length = float(config["simulation"]["length"])
-    timetable_cfg = config["timetable"]
-
-    timetable = []
-    arrival_counter = {"train": 0, "vessel": 0, "truck": 0}
-
-    # Train
-    train_cfg = timetable_cfg["train"]
-    if train_cfg.get("enabled", True):
-        headway = float(train_cfg["headway"])
-        batch_size = int(train_cfg["batch_size"])
-        destination_split = train_cfg["destination_split"]
-
-        trains_per_day = int(round(24 / headway))
-        day = 0
-
-        while day * 24 < sim_length:
-            base_time = day * 24 + 12.0
-            arrivals = [base_time + random.uniform(-12, 12) for _ in range(trains_per_day)]
-            arrivals.sort()
-
-            for t in arrivals:
-                if 0 <= t <= sim_length:
-                    arrival_counter["train"] += 1
-                    timetable.append({
-                        "mode": "train",
-                        "arrival_id": arrival_counter["train"],
-                        "arrival_time": round(t, 4),
-                        "batch_size": batch_size,
-                        "destination_split": destination_split
-                    })
-
-            day += 1
-
-    # Vessel
-    vessel_cfg = timetable_cfg["vessel"]
-    if vessel_cfg.get("enabled", True):
-        headway = float(vessel_cfg["headway"])
-        batch_size = int(vessel_cfg["batch_size"])
-        destination_split = vessel_cfg["destination_split"]
-
-        t = 0.0
-        while t <= sim_length:
-            delay = random.uniform(-24, 24)
-            arrival_time = t + delay
-
-            if 0 <= arrival_time <= sim_length:
-                arrival_counter["vessel"] += 1
-                timetable.append({
-                    "mode": "vessel",
-                    "arrival_id": arrival_counter["vessel"],
-                    "arrival_time": round(arrival_time, 4),
-                    "batch_size": batch_size,
-                    "destination_split": destination_split
-                })
-
-            t += headway
-
-    # Truck
-    truck_cfg = timetable_cfg["truck"]
-    if truck_cfg.get("enabled", True):
-        mean_interarrival = float(truck_cfg["headway"])
-        batch_size = int(truck_cfg["batch_size"])
-        destination_split = truck_cfg["destination_split"]
-
-        t = 0.0
-        while t <= sim_length:
-            interarrival = random.expovariate(1.0 / mean_interarrival)
-            t += interarrival
-
-            if t > sim_length:
-                break
-
-            arrival_counter["truck"] += 1
-            timetable.append({
-                "mode": "truck",
-                "arrival_id": arrival_counter["truck"],
-                "arrival_time": round(t, 4),
-                "batch_size": batch_size,
-                "destination_split": destination_split
-            })
-
-    timetable.sort(key=lambda x: x["arrival_time"])
-    return timetable
 
 
 def generate_containers(arrival_entry):
@@ -380,9 +304,61 @@ def generate_containers(arrival_entry):
     return containers
 
 
+# def prestage_containers_at_t0(env, terminal, config):
+#     """At T=0, inject one-week vessel container batch into the stack.
+#
+#     This implements the "pre-stage" rule:
+#     all containers associated with one-week vessels appear in the stack at time 0.
+#     We create containers using the vessel destination_split and mark:
+#       - origin_mode='vessel', origin_id start from 0
+#       - destination_mode in {'train','truck',...} per vessel split
+#       - destination_id=None (assigned later when the receiving mode actually picks it)
+#     """
+#     vessel_cfg = config.get("timetable", {}).get("vessel", {})
+#     if not vessel_cfg.get("enabled", True):
+#         return
+#
+#     batch_size = int(vessel_cfg.get("batch_size", 0))
+#     destination_split = vessel_cfg.get("destination_split", {})
+#     if batch_size <= 0 or not destination_split:
+#         return
+#
+#     yield env.timeout(0)
+#
+#     destinations = list(destination_split.keys())
+#     weights = list(destination_split.values())
+#
+#     for i in range(batch_size):
+#         dest_mode = random.choices(destinations, weights=weights, k=1)[0]
+#         c = Container(
+#             id=i,
+#             origin_mode="vessel",
+#             origin_id=0,
+#             destination_mode=dest_mode,
+#             destination_id=None
+#         )
+#         yield terminal.container_stack.put(c)
+#         record_event(c, "arrival_expected", 0.0)
+#         record_event(c, "arrival_actual", 0.0)
+
+
 def check_oc_ready(ctx, chassis_store):
     count = sum(1 for c in chassis_store.items if ctx.is_outbound(c))
     return count == ctx.batch_size
+
+
+def stack_get_first_matching(env, stack, predicate, poll_interval=0.001):
+    """FIFO conditional pop from a simpy.Store.
+
+    simpy.FilterStore does not guarantee FIFO under filters. This helper preserves FIFO by scanning
+    stack.items in order and removing the first match. If nothing matches, it waits briefly and retries.
+    """
+    while True:
+        for i, item in enumerate(list(stack.items)):
+            if predicate(item):
+                stack.items.pop(i)
+                return item
+        yield env.timeout(poll_interval)
 
 
 def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
@@ -413,12 +389,25 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
         yield terminal.truck_pool.put(truck)
     # IC dropped to container stack, and about to be OC when train/vessel arrives
     else:
-        terminal.container_stack.put(ic)
+        yield terminal.container_stack.put(ic)
 
-    # 5. find OC and bind destination
-    oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
-    oc.destination_id = ic.origin_id
-    record_event(oc, "hostler_OC_pick_up", env.now)
+    # # 5. find OC (FIFO among matches) and bind destination
+    # oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
+    # oc.destination_id = ic.origin_id
+    # record_event(oc, "hostler_OC_pick_up", env.now)
+
+    # 5. find OC: PRIORITIZE existing inventory for this mode
+    matching_ocs = [ c for c in terminal.container_stack.items
+        if c.destination_mode == ic.origin_mode and c.destination_id is None]
+
+    if matching_ocs:
+        oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
+        oc.destination_id = ic.origin_id
+        record_event(oc, "hostler_OC_pick_up", env.now)
+    else:
+        # no OC available for this mode → do nothing here
+        # truck-demand MUST be handled by truck arrival, not hostler
+        return
 
     # 6. move OC back to chassis
     yield env.timeout(chassis_stack_travel_time)
@@ -468,63 +457,67 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
 
         yield chassis_store.put(container)
         yield crane_pool.put(crane)
-        env.process(hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, container))
 
         remaining -= 1
         if remaining == 0 and not ctx.ic_unloaded.triggered:
             ctx.ic_unloaded.succeed()
-            print(f"[{env.now:.2f}] All IC unloaded for {mode}-{ctx.id}")
+            print(f"[{env.now:.2f}] {ctx} IC unloaded to chassis")
 
     for c in inbound_containers:
         env.process(unload_one(c))
 
-    yield ctx.ic_unloaded
+    return chassis_store
 
 
-def crane_load_outbound_process(env, terminal, ctx):
+def crane_load_outbound_process(env, terminal, ctx, chassis_store):
     """
-    Load outbound containers from chassis to train/vessel
+    Generator process: load outbound containers from chassis to train/vessel using cranes.
+    This MUST be a generator if you want to call it via env.process(...).
     """
+    # Make it a real process + ensure OC is ready before loading
+    yield ctx.oc_ready
 
     resource_type, resource_id = ctx.assigned_resource
-
     if resource_type == "track":
         crane_pool = terminal.cranes_by_track[resource_id]
-        chassis_store = terminal.trackside_chassis
     elif resource_type == "berth":
         crane_pool = terminal.cranes_by_berth[resource_id]
-        chassis_store = terminal.berthside_chassis
     else:
         raise ValueError("Unknown resource type")
 
-    yield ctx.oc_ready
-
-    remaining = ctx.batch_size
-
     def load_one():
-        nonlocal remaining
-
         crane = yield crane_pool.get()
+        try:
+            # Wait until one outbound exists on chassis
+            while True:
+                outbound = None
+                for c in chassis_store.items:
+                    if ctx.is_outbound(c):
+                        outbound = c
+                        break
+                if outbound is not None:
+                    break
+                yield env.timeout(0.0001)
 
-        oc = yield chassis_store.get(lambda c: ctx.is_outbound(c))
+            # Remove it from chassis
+            yield chassis_store.get(lambda c: c == outbound)
 
-        load_time = 0.02
-        yield env.timeout(load_time)
-        record_event(oc, "chassis_OC_load", env.now)
-        ctx.loaded_containers.append(oc)
+            # Load time
+            load_time = 0.02
+            yield env.timeout(load_time)
 
-        yield crane_pool.put(crane)
+            ctx.loaded_containers.append(outbound)
+            record_event(outbound, "chassis_OC_load", env.now)
+        finally:
+            yield crane_pool.put(crane)
 
-        remaining -= 1
-        if remaining == 0 and not ctx.oc_loaded.triggered:
-            ctx.oc_loaded.succeed()
-            print(f"[{env.now:.2f}] All OC loaded for {ctx}")
+    # Launch parallel crane moves
+    procs = [env.process(load_one()) for _ in range(ctx.batch_size)]
+    yield simpy.events.AllOf(env, procs)
 
-    for _ in range(ctx.batch_size):
-        env.process(load_one())
-
-    yield ctx.oc_loaded
-
+    if not ctx.oc_loaded.triggered:
+        ctx.oc_loaded.succeed()
+        print(f"[{env.now:.2f}] {ctx} OC loaded")
 
 
 def train_vessel_arrival_process(env, terminal, arrival_entry):
@@ -534,36 +527,40 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
 
     ctx = ArrivalContext(env, mode, arrival_id, batch_size)
     yield env.timeout(arrival_entry["arrival_time"] - env.now)
-    print(f"\n[{env.now:.2f}] [{mode}] {ctx} ARRIVED")
 
+    # assign track/berth
     if mode == "train":
         track_id = yield terminal.tracks.get()
-        if track_id is None:
-            terminal.waiting_trains.append(arrival_id)
-            return
         ctx.assigned_resource = ("track", track_id)
-        print(f"  Train {arrival_id} assigned to track {track_id}")
-
     elif mode == "vessel":
         berth_id = yield terminal.berths.get()
-        if berth_id is None:
-            terminal.waiting_vessels.append(arrival_id)
-            return
         ctx.assigned_resource = ("berth", berth_id)
-        print(f"  Vessel {arrival_id} assigned to berth {berth_id}")
+    else:
+        raise ValueError("Unknown mode in arrival process")
 
     ctx.arrived.succeed()
+    print(f"[{env.now:.2f}] {ctx} ARRIVED")
 
-    containers = generate_containers(arrival_entry)
-    inbound = [c for c in containers if c.origin_mode == mode]
-
-    for c in inbound:
-        record_event(c, "arrival_expected", arrival_entry["arrival_time"])
+    inbound_containers = generate_containers(arrival_entry)
+    for c in inbound_containers:
         record_event(c, "arrival_actual", env.now)
+        record_event(c, "arrival_expected", arrival_entry["arrival_time"])
 
-    env.process(crane_unload_inbound_process(env, terminal, mode, ctx, inbound))
-    env.process(crane_load_outbound_process(env, terminal, ctx))
+    # crane unload to chassis
+    chassis_store = crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers)
+    yield ctx.ic_unloaded
+
+    # all OC ready: hostlers move IC -> stack and swap in OC -> chassis
+    for ic in list(inbound_containers):
+        env.process(hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic))
+    yield ctx.ic_cleared
+    yield ctx.oc_ready
+    env.process(crane_load_outbound_process(env, terminal, ctx, chassis_store))
+
+    # depart
     env.process(train_vessel_departure_process(env, terminal, ctx))
+
+    return ctx
 
 
 def truck_arrival_process(env, terminal, arrival_entry):
@@ -708,13 +705,16 @@ def export_container_events_to_three_csvs(filepath, prefix):
 def main():
     random.seed(42)
     env = simpy.Environment()
+    start_time = time.time()
 
-    input_config_yaml = "/Users/qianqiantong/PycharmProjects/LIFTS/multimodal/input/config.yaml"
+    input_config_yaml = "input/config.yaml"
     config = load_config(input_config_yaml)
     output_dir = "output/ContainerLog/"
+    os.makedirs(output_dir, exist_ok=True)
 
     terminal = Terminal(env, config)
-    timetable = generate_timetable(config)
+    # env.process(prestage_containers_at_t0(env, terminal, config))
+    timetable = generate_timetable(config, verbose=False)
 
     for entry in timetable:
         if entry["mode"] in ["train", "vessel"]:
@@ -722,12 +722,11 @@ def main():
         elif entry["mode"] == "truck":
             env.process(truck_arrival_process(env, terminal, entry))
 
-    sim_length = min(config["simulation"]["length"],500)
+    sim_length = float(config["simulation"]["length"])
     env.run(until=sim_length)
 
-    # print("container events:",container_events)
-    export_container_events_to_three_csvs(output_dir, None)
-    print("Simulation finished. Results saved!")
+    export_container_events_to_three_csvs(output_dir, "container")
+    print(f"Simulation costs {(time.time() - start_time):.2f} s. Results saved!")
 
 
 if __name__ == "__main__":
