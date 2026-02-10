@@ -392,22 +392,21 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
         yield terminal.container_stack.put(ic)
 
     # # 5. find OC (FIFO among matches) and bind destination
-    # oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
-    # oc.destination_id = ic.origin_id
-    # record_event(oc, "hostler_OC_pick_up", env.now)
+    oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
+    oc.destination_id = ic.origin_id
+    record_event(oc, "hostler_OC_pick_up", env.now)
 
-    # 5. find OC: PRIORITIZE existing inventory for this mode
-    matching_ocs = [ c for c in terminal.container_stack.items
-        if c.destination_mode == ic.origin_mode and c.destination_id is None]
-
-    if matching_ocs:
-        oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
-        oc.destination_id = ic.origin_id
-        record_event(oc, "hostler_OC_pick_up", env.now)
-    else:
-        # no OC available for this mode → do nothing here
-        # truck-demand MUST be handled by truck arrival, not hostler
-        return
+    # matching_ocs = [ c for c in terminal.container_stack.items
+    #     if c.destination_mode == ic.origin_mode and c.destination_id is None]
+    #
+    # if matching_ocs:
+    #     oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
+    #     oc.destination_id = ic.origin_id
+    #     record_event(oc, "hostler_OC_pick_up", env.now)
+    # else:
+    #     # no OC available for this mode → do nothing here
+    #     # truck-demand MUST be handled by truck arrival, not hostler
+    #     return
 
     # 6. move OC back to chassis
     yield env.timeout(chassis_stack_travel_time)
@@ -702,32 +701,32 @@ def export_container_events_to_three_csvs(filepath, prefix):
     return container_metrics
 
 
-def main():
-    random.seed(42)
-    env = simpy.Environment()
-    start_time = time.time()
-
-    input_config_yaml = "input/config.yaml"
-    config = load_config(input_config_yaml)
-    output_dir = "output/ContainerLog/"
-    os.makedirs(output_dir, exist_ok=True)
-
-    terminal = Terminal(env, config)
-    # env.process(prestage_containers_at_t0(env, terminal, config))
-    timetable = generate_timetable(config, verbose=False)
-
-    for entry in timetable:
-        if entry["mode"] in ["train", "vessel"]:
-            env.process(train_vessel_arrival_process(env, terminal, entry))
-        elif entry["mode"] == "truck":
-            env.process(truck_arrival_process(env, terminal, entry))
-
-    sim_length = float(config["simulation"]["length"])
-    env.run(until=sim_length)
-
-    export_container_events_to_three_csvs(output_dir, "container")
-    print(f"Simulation costs {(time.time() - start_time):.2f} s. Results saved!")
-
-
-if __name__ == "__main__":
-    main()
+# def main():
+#     random.seed(42)
+#     env = simpy.Environment()
+#     start_time = time.time()
+#
+#     input_config_yaml = "input/config.yaml"
+#     config = load_config(input_config_yaml)
+#     output_dir = "output/ContainerLog/"
+#     os.makedirs(output_dir, exist_ok=True)
+#
+#     terminal = Terminal(env, config)
+#     # env.process(prestage_containers_at_t0(env, terminal, config))
+#     timetable = generate_timetable(config, verbose=False)
+#
+#     for entry in timetable:
+#         if entry["mode"] in ["train", "vessel"]:
+#             env.process(train_vessel_arrival_process(env, terminal, entry))
+#         elif entry["mode"] == "truck":
+#             env.process(truck_arrival_process(env, terminal, entry))
+#
+#     sim_length = float(config["simulation"]["length"])
+#     env.run(until=sim_length)
+#
+#     export_container_events_to_three_csvs(output_dir, "container")
+#     print(f"Simulation costs {(time.time() - start_time):.2f} s. Results saved!")
+#
+#
+# if __name__ == "__main__":
+#     main()

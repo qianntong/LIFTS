@@ -1,4 +1,3 @@
-# multimodal_timetable.py
 import random
 import yaml
 from pathlib import Path
