@@ -1,282 +1,168 @@
-import random
-import yaml
-from pathlib import Path
+import math
+from collections import defaultdict
 
-
-def calculate_weekly_balancing_params(train_entries, vessel_entries, week_length):
+def calculate_weekly_balancing_params(vessel_batch, p_v_to_t, train_batch_size):
     """
-    Capacity-aware weekly truck balancing.
+    Symmetric assumption:
+      T->V = V->T
+      H->V = V->H
+    Train capacity hard constraint (integer train_batch_size)
 
-    Principles:
-    - Train capacity is a HARD constraint
-    - Vessel supply must be fully cleared
-    - Truck is the final balancer
+    Truck arrivals definition (your convention):
+      weekly_trucks = H->V + H->T
     """
 
-    weekly = {}
+    V = int(vessel_batch)
 
-    def week_index(t):
-        return int(t // week_length) if week_length > 0 else 0
+    # Vessel unload
+    V_to_T = int(round(V * p_v_to_t))
+    V_to_H = V - V_to_T
 
-    for e in train_entries:
-        w = week_index(e["arrival_time"])
-        rec = weekly.setdefault(
-            w,
-            {
-                "train_total": 0.0,
-                "vessel_total": 0.0,
-                "train_to_vessel": 0.0,
-                "vessel_to_train": 0.0,
-            },
-        )
+    # Train capacity
+    n_trains = int(math.ceil(V_to_T / train_batch_size))
+    train_total = n_trains * train_batch_size
 
-        b = float(e["batch_size"])
-        rec["train_total"] += b
-        rec["train_to_vessel"] += b * float(
-            e["destination_split"].get("vessel", 0.0)
-        )
+    # Symmetric vessel load
+    T_to_V = V_to_T
+    H_to_V = V_to_H
 
-    # Aggregate vessels
-    for e in vessel_entries:
-        w = week_index(e["arrival_time"])
-        rec = weekly.setdefault(
-            w,
-            {
-                "train_total": 0.0,
-                "vessel_total": 0.0,
-                "train_to_vessel": 0.0,
-                "vessel_to_train": 0.0,
-            },
-        )
+    # Train residuals
+    H_to_T = train_total - V_to_T
+    T_to_H = train_total - T_to_V  # equals H_to_T under symmetry
 
-        b = float(e["batch_size"])
-        rec["vessel_total"] += b
-        rec["vessel_to_train"] += b * float(
-            e["destination_split"].get("train", 0.0)
-        )
+    # Truck arrivals (ONLY inbound trucks)
+    truck_total = int(H_to_V + H_to_T)
 
-    # Derive truck balancing
-    for w, rec in weekly.items():
+    return {
+        "V": V,
+        "V_to_T": V_to_T,
+        "V_to_H": V_to_H,
+        "T_to_V": T_to_V,
+        "H_to_V": H_to_V,
+        "H_to_T": H_to_T,
+        "T_to_H": T_to_H,
+        "train_trips": n_trains,
+        "train_total": train_total,
+        "truck_total": truck_total,
+    }
 
-        train_total = rec["train_total"]
-        vessel_total = rec["vessel_total"]
 
-        train_to_vessel = rec["train_to_vessel"]
-        vessel_to_train = rec["vessel_to_train"]
-
-        # 1. lock train capacity
-        train_capacity_used = vessel_to_train
-        train_capacity_left = max(0.0, train_total - train_capacity_used)
-
-        # 2. train supply to vessel
-        train_supply_to_vessel = min(train_to_vessel, vessel_total)
-
-        # 3. vessel remainder → truck
-        truck_to_vessel = max(0.0, vessel_total - train_supply_to_vessel)
-
-        # 4. truck to train (capacity-limited)
-        vessel_to_truck_demand = max(0.0, vessel_total - vessel_to_train)
-        truck_to_train = min(train_capacity_left, vessel_to_truck_demand)
-
-        truck_total = int(round(truck_to_vessel + truck_to_train))
-
-        if truck_total <= 0:
-            rec.update(
-                {
-                    "truck_total": 0,
-                    "truck_to_vessel": 0,
-                    "truck_to_train": 0,
-                    "truck_split": {},
-                    "truck_headway": None,
-                }
-            )
-            continue
-
-        p_v = truck_to_vessel / truck_total
-        p_t = truck_to_train / truck_total
-
-        split = {}
-        if p_v > 0:
-            split["vessel"] = p_v
-        if p_t > 0:
-            split["train"] = p_t
-
-        rec.update(
-            {
-                "truck_total": truck_total,
-                "truck_to_vessel": int(round(truck_to_vessel)),
-                "truck_to_train": int(round(truck_to_train)),
-                "truck_split": split,
-                "truck_headway": week_length / truck_total,
-            }
-        )
-
-    return weekly
-
+def _sample_week_times(start, end, n):
+    if n <= 0:
+        return []
+    step = (end - start) / n
+    return [start + (i + 0.5) * step for i in range(n)]
 
 
 def generate_timetable(config, verbose=True):
     """
-    Generate multimodal timetable.
-
-    Parameters
-    ----------
-    config : dict
-        Parsed YAML config
-    verbose : bool
-        Whether to print detailed logs (default True)
+    Return: list[dict] timetable entries, each entry includes:
+      - mode, arrival_id, arrival_time, batch_size, destination_split, week
     """
-
     def log(msg=""):
         if verbose:
             print(msg)
 
     sim_length = float(config["simulation"]["length"])
-    timetable_cfg = config["timetable"]
+    tt = config["timetable"]
 
+    vessel_cfg = tt["vessel"]
+    train_cfg = tt["train"]
+    truck_cfg = tt.get("truck", {"batch_size": 1})
+
+    # Inputs
+    vessel_weekly_num = int(vessel_cfg.get("weekly_num", 1))
+    vessel_batch = int(vessel_cfg["batch_size"])
+    p_v_to_t = float(vessel_cfg["destination_split"]["train"])
+    train_batch_size = int(train_cfg["batch_size"])
     WEEK_LENGTH = 168.0
+
     max_week = int(sim_length // WEEK_LENGTH)
 
-    arrival_counter = {"vessel": 0, "train": 0, "truck": 0}
     timetable = []
-
-    vessel_entries = []
-    train_entries = []
-
-    # def sample_week_times(start, end, n):
-    #     ts = [random.uniform(start, end) for _ in range(n)]
-    #     ts.sort()
-    #     return ts
-
-    def sample_week_times(start, end, n):
-        if n <= 0:
-            return []
-        step = (end - start) / n
-        return [start + (i + 0.5) * step for i in range(n)]
+    arrival_counter = {"vessel": 0, "train": 0, "truck": 0}
 
     log("\n================ TIMETABLE ================")
-    log(f"Simulation length = {sim_length:.1f} h  ({max_week} weeks)\n")
+    log(f"Simulation length = {sim_length:.1f} h ({max_week} weeks)\n")
 
-    tmp_vessel = [{
-        "arrival_time": 0.0,
-        "batch_size": timetable_cfg["vessel"]["batch_size"],
-        "destination_split": timetable_cfg["vessel"]["destination_split"],
-    }]
-
-    tmp_train = [
-        {
-            "arrival_time": 0.0,
-            "batch_size": timetable_cfg["train"]["batch_size"],
-            "destination_split": timetable_cfg["train"]["destination_split"],
-        }
-        for _ in range(int(timetable_cfg["train"]["weekly_num"]))
-    ]
-
-    baseline = calculate_weekly_balancing_params(
-        tmp_train, tmp_vessel, WEEK_LENGTH
-    )[0]
-
-    log("[INPUT]")
-    log(
-        f"  Vessel: weekly_num={timetable_cfg['vessel']['weekly_num']}, "
-        f"batch_size={timetable_cfg['vessel']['batch_size']}, "
-        f"split={timetable_cfg['vessel']['destination_split']}"
-    )
-    log(
-        f"  Train : weekly_num={timetable_cfg['train']['weekly_num']}, "
-        f"batch_size={timetable_cfg['train']['batch_size']}, "
-        f"split={timetable_cfg['train']['destination_split']}"
-    )
-    log(
-        f"  Truck : weekly_num={baseline['truck_total']}, "
-        f"batch_size={timetable_cfg['truck']['batch_size']}, "
-        f"split={baseline['truck_split']}\n"
-    )
-
-    # Weekly loop
     for w in range(max_week):
         week_start = w * WEEK_LENGTH
         week_end = (w + 1) * WEEK_LENGTH
 
-        log(f"[Week {w}] ({week_start:.0f} – {week_end:.0f} h)")
-
-        # Vessel arrivals
-        v_cfg = timetable_cfg["vessel"]
-        v_times = sample_week_times(
-            week_start, week_end, int(v_cfg["weekly_num"])
+        # ---- weekly flow computation (one-week volumes) ----
+        flows = calculate_weekly_balancing_params(
+            vessel_batch=vessel_batch,
+            p_v_to_t=p_v_to_t,
+            train_batch_size=train_batch_size,
         )
 
+        # ---- derive endogenous splits for train/truck ----
+        # Train inbound split (train -> vessel / truck)
+        if flows["train_total"] > 0:
+            train_split = {
+                "vessel": flows["T_to_V"] / flows["train_total"],
+                "truck":  flows["T_to_H"] / flows["train_total"],
+            }
+        else:
+            train_split = {}
+
+        # Truck inbound split (truck -> vessel / train)
+        if flows["truck_total"] > 0:
+            truck_split = {
+                "vessel": flows["H_to_V"] / flows["truck_total"],
+                "train":  flows["H_to_T"] / flows["truck_total"],
+            }
+        else:
+            truck_split = {}
+
+        log(f"[Week {w}] ({week_start:.0f} – {week_end:.0f} h)")
+        log(f"  flows: V->T={flows['V_to_T']}, V->H={flows['V_to_H']}, "
+            f"H->T={flows['H_to_T']}, H->V={flows['H_to_V']}")
+        log(f"  train_trips={flows['train_trips']}, truck_total={flows['truck_total']}")
+        log(f"  train_split={train_split}")
+        log(f"  truck_split={truck_split}\n")
+
+        # ---- Vessel arrivals (usually 1/week) ----
+        v_times = _sample_week_times(week_start, week_end, vessel_weekly_num)
         for t in v_times:
             arrival_counter["vessel"] += 1
-            e = {
+            timetable.append({
                 "mode": "vessel",
                 "arrival_id": arrival_counter["vessel"],
                 "arrival_time": round(t, 4),
-                "batch_size": int(v_cfg["batch_size"]),
-                "destination_split": dict(v_cfg["destination_split"]),
+                "batch_size": vessel_batch,
+                "destination_split": dict(vessel_cfg["destination_split"]),
                 "week": w,
-            }
-            vessel_entries.append(e)
-            timetable.append(e)
+            })
 
-        # Train arrivals
-        t_cfg = timetable_cfg["train"]
-        t_times = sample_week_times(
-            week_start, week_end, int(t_cfg["weekly_num"])
-        )
-
+        # ---- Train arrivals (endogenous count) ----
+        t_times = _sample_week_times(week_start, week_end, flows["train_trips"])
         for t in t_times:
             arrival_counter["train"] += 1
-            e = {
+            timetable.append({
                 "mode": "train",
                 "arrival_id": arrival_counter["train"],
                 "arrival_time": round(t, 4),
-                "batch_size": int(t_cfg["batch_size"]),
-                "destination_split": dict(t_cfg["destination_split"]),
+                "batch_size": train_batch_size,
+                "destination_split": dict(train_split),
                 "week": w,
-            }
-            train_entries.append(e)
-            timetable.append(e)
+            })
 
-        # ------------------
-        # Truck arrivals (balancing)
-        # ------------------
-        weekly_balancing = calculate_weekly_balancing_params(
-            train_entries, vessel_entries, WEEK_LENGTH
-        )
-        rec = weekly_balancing.get(w, {})
-
-        truck_total = int(rec.get("truck_total", 0))
-        truck_split = rec.get("truck_split", {})
-
-        log(f"  Vessel arrivals = {int(v_cfg['weekly_num'])}")
-        log(f"  Train  arrivals = {int(t_cfg['weekly_num'])}")
-        log(f"  Truck  arrivals = {truck_total}")
-
-        if truck_total > 0:
-            log(f"    truck_split = {truck_split}")
-
-        truck_times = sample_week_times(week_start, week_end, truck_total)
+        # ---- Truck arrivals (endogenous count) ----
+        truck_times = _sample_week_times(week_start, week_end, flows["truck_total"])
         for t in truck_times:
             arrival_counter["truck"] += 1
-            timetable.append(
-                {
-                    "mode": "truck",
-                    "arrival_id": arrival_counter["truck"],
-                    "arrival_time": round(t, 4),
-                    "batch_size": int(
-                        timetable_cfg["truck"].get("batch_size", 1)
-                    ),
-                    "destination_split": truck_split,
-                    "week": w,
-                }
-            )
-
-        log("")
+            timetable.append({
+                "mode": "truck",
+                "arrival_id": arrival_counter["truck"],
+                "arrival_time": round(t, 4),
+                "batch_size": int(truck_cfg.get("batch_size", 1)),
+                "destination_split": dict(truck_split),
+                "week": w,
+            })
 
     timetable.sort(key=lambda x: x["arrival_time"])
 
-    # Final summary
     log("================ FINAL ARRIVAL COUNTS ================")
     log(f"  Vessel arrivals total = {arrival_counter['vessel']}")
     log(f"  Train  arrivals total = {arrival_counter['train']}")
@@ -286,88 +172,28 @@ def generate_timetable(config, verbose=True):
     return timetable
 
 
-from collections import defaultdict
-
-def export_mode_timetable_txt(
-    timetable,
-    mode,
-    filepath,
-    max_rows_per_week=None,
-):
-    """
-    Export per-week timetable for a given mode (train / vessel / truck).
-
-    Parameters
-    ----------
-    timetable : list[dict]
-        Generated timetable
-    mode : str
-        'train', 'vessel', or 'truck'
-    filepath : str
-        Output txt path
-    max_rows_per_week : int or None
-        Limit number of rows per week (useful for truck)
-        None = no limit
-    """
-
+def export_mode_timetable_txt(timetable, mode, filepath, max_rows_per_week=None):
     events_by_week = defaultdict(list)
-
-    # -----------------------
-    # Group by week
-    # -----------------------
     for e in timetable:
         if e["mode"] == mode:
             events_by_week[e["week"]].append(e)
 
     with open(filepath, "w") as f:
-
         for w in sorted(events_by_week.keys()):
             f.write(f"[Week {w}]\n")
-
-            # sort by arrival time
-            events = sorted(
-                events_by_week[w],
-                key=lambda x: x["arrival_time"]
-            )
+            events = sorted(events_by_week[w], key=lambda x: x["arrival_time"])
 
             for i, ev in enumerate(events):
-
                 if max_rows_per_week is not None and i >= max_rows_per_week:
                     remaining = len(events) - max_rows_per_week
-                    f.write(
-                        f"  ... ({remaining} more {mode} arrivals omitted)\n"
-                    )
+                    f.write(f"  ... ({remaining} more {mode} arrivals omitted)\n")
                     break
 
-                label = mode.capitalize()
                 line = (
-                    f"  {label} {ev['arrival_id']} | "
-                    f"time = {ev['arrival_time']:.2f} h | "
-                    f"batch = {ev['batch_size']}"
+                    f"  {mode.capitalize()} {ev['arrival_id']} | "
+                    f"time={ev['arrival_time']:.2f} h | "
+                    f"batch={ev['batch_size']} | "
+                    f"split={ev.get('destination_split', {})}"
                 )
-
-                # destination split (useful esp. for truck)
-                if "destination_split" in ev:
-                    line += f" | split = {ev['destination_split']}"
-
                 f.write(line + "\n")
-
             f.write("\n")
-
-
-# if __name__ == "__main__":
-#
-#     random.seed(42)
-#
-#     config_path = Path("input/config.yaml")
-#
-#     with open(config_path, "r") as f:
-#         config = yaml.safe_load(f)
-#
-#     timetable = generate_timetable(config, verbose=True)
-#
-#     for mode in ["train", "vessel", "truck"]:
-#         export_mode_timetable_txt(
-#             timetable,
-#             mode=f"{mode}",
-#             filepath=f"output/ContainerLog/{mode}_timetable.txt")

@@ -3,8 +3,11 @@ from typing import Optional
 import simpy
 import csv
 import os
+import yaml
+import random
 import time
 from multimodal_timetable import *
+from multimodal_distances import DistanceModel
 
 container_events = {}
 
@@ -139,6 +142,7 @@ class Terminal:
 
         # Single physical stack (FIFO). Holds both prestaged inventory and newly unloaded containers.
         # NOTE: We deliberately use simpy.Store (not FilterStore) to preserve FIFO order under conditional picks.
+        self.distance_model = DistanceModel(config, basis_mode="max")
         self.container_stack = simpy.FilterStore(env, capacity=10**6)
 
         self.trackside_chassis = simpy.FilterStore(env, capacity=10**6)
@@ -151,7 +155,6 @@ class Terminal:
         self.CONTAINERS_PER_CRANE_MOVE_MEAN = 2 / 60
         self.CRANE_MOVE_DEV_TIME = 1 / 3600
         self.TRUCK_DIESEL_PERCENTAGE = 1
-        self.TRUCK_ARRIVAL_MEAN = 2 / 60
         self.TRUCK_INGATE_TIME = 2 / 60
         self.TRUCK_OUTGATE_TIME = 2 / 60
         self.TRUCK_INGATE_TIME_DEV = 2 / 60
@@ -365,17 +368,22 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     """
     One complete IC -> OC cycle handled by a single hostler
     """
+    dm = terminal.distance_model
+
     # 1. get hostler
     hostler = yield terminal.hostler_pool.get()
 
     # 2. travel to chassis and pick IC
-    park_chassis_travel_time = 0.04
+    ic_path = dm.get_hostler_path(origin_mode=ic.origin_mode,destination_mode=None,stage="ic_move")
+    park_chassis_travel_time = dm.compute_travel_time_hr(ic_path,len(terminal.hostler_pool.items),"hostler")
     yield env.timeout(park_chassis_travel_time)
+
     yield chassis_store.get(lambda c: c == ic)
     record_event(ic, "hostler_IC_pick_up", env.now)
 
     # 3. move IC to stack
-    chassis_stack_travel_time = 0.04
+    ic_path = dm.get_hostler_path(origin_mode=ic.origin_mode, destination_mode=None, stage="ic_move")
+    chassis_stack_travel_time = dm.compute_travel_time_hr(ic_path, len(terminal.hostler_pool.items), "hostler")
     yield env.timeout(chassis_stack_travel_time)
     record_event(ic, "hostler_IC_drop_off", env.now)
 
@@ -383,7 +391,9 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     if ic.destination_mode == "truck":
         truck = yield terminal.truck_pool.get()
         ic.destination_id = truck.id
-        travel_time_to_gate = 0.04
+        # travel_time_to_gate = 0.04
+        dist = dm.sample_distance("truck")
+        travel_time_to_gate = dm.compute_travel_time(dist,len(terminal.truck_pool.items),"truck")
         yield env.timeout(travel_time_to_gate)
         record_event(ic, "departure", env.now)
         yield terminal.truck_pool.put(truck)
@@ -391,7 +401,10 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     else:
         yield terminal.container_stack.put(ic)
 
+
     # # 5. find OC (FIFO among matches) and bind destination
+    reposition_time = dm.compute_travel_time_hr(["hostler_reposition"],len(terminal.hostler_pool.items), "hostler") # hostler repositioning to find OC
+    yield env.timeout(reposition_time)
     oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
     oc.destination_id = ic.origin_id
     record_event(oc, "hostler_OC_pick_up", env.now)
@@ -409,6 +422,8 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     #     return
 
     # 6. move OC back to chassis
+    oc_path = dm.get_hostler_path(origin_mode=None, destination_mode=oc.destination_mode, stage="oc_move")
+    chassis_stack_travel_time = dm.compute_travel_time_hr(oc_path, len(terminal.hostler_pool.items),"hostler")
     yield env.timeout(chassis_stack_travel_time)
     yield chassis_store.put(oc)
     record_event(oc, "hostler_OC_drop_off", env.now)
@@ -450,8 +465,9 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
 
         crane = yield crane_pool.get()
 
-        unload_time = 0.02
+        unload_time = (terminal.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, terminal.CRANE_MOVE_DEV_TIME))
         yield env.timeout(unload_time)
+
         record_event(container, "chassis_IC_unload", env.now)
 
         yield chassis_store.put(container)
@@ -471,7 +487,6 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
 def crane_load_outbound_process(env, terminal, ctx, chassis_store):
     """
     Generator process: load outbound containers from chassis to train/vessel using cranes.
-    This MUST be a generator if you want to call it via env.process(...).
     """
     # Make it a real process + ensure OC is ready before loading
     yield ctx.oc_ready
@@ -502,7 +517,7 @@ def crane_load_outbound_process(env, terminal, ctx, chassis_store):
             yield chassis_store.get(lambda c: c == outbound)
 
             # Load time
-            load_time = 0.02
+            load_time = (terminal.CONTAINERS_PER_CRANE_MOVE_MEAN + random.uniform(0, terminal.CRANE_MOVE_DEV_TIME))
             yield env.timeout(load_time)
 
             ctx.loaded_containers.append(outbound)
@@ -563,6 +578,7 @@ def train_vessel_arrival_process(env, terminal, arrival_entry):
 
 
 def truck_arrival_process(env, terminal, arrival_entry):
+    dm = terminal.distance_model
     arrival_id = arrival_entry["arrival_id"]
     truck_ctx = TruckContext(env, arrival_id)
     yield env.timeout(arrival_entry["arrival_time"] - env.now)
@@ -575,6 +591,9 @@ def truck_arrival_process(env, terminal, arrival_entry):
     with terminal.in_gates.request() as req:
         yield req
         yield env.timeout(terminal.TRUCK_INGATE_TIME)
+        dist = dm.sample_distance("truck")
+        travel_time_to_gate = dm.compute_travel_time(dist, len(terminal.truck_pool.items), "truck")
+        yield env.timeout(travel_time_to_gate)
 
     yield terminal.container_stack.put(container)
     record_event(container, "arrival_actual", env.now)
@@ -701,32 +720,32 @@ def export_container_events_to_three_csvs(filepath, prefix):
     return container_metrics
 
 
-# def main():
-#     random.seed(42)
-#     env = simpy.Environment()
-#     start_time = time.time()
-#
-#     input_config_yaml = "input/config.yaml"
-#     config = load_config(input_config_yaml)
-#     output_dir = "output/ContainerLog/"
-#     os.makedirs(output_dir, exist_ok=True)
-#
-#     terminal = Terminal(env, config)
-#     # env.process(prestage_containers_at_t0(env, terminal, config))
-#     timetable = generate_timetable(config, verbose=False)
-#
-#     for entry in timetable:
-#         if entry["mode"] in ["train", "vessel"]:
-#             env.process(train_vessel_arrival_process(env, terminal, entry))
-#         elif entry["mode"] == "truck":
-#             env.process(truck_arrival_process(env, terminal, entry))
-#
-#     sim_length = float(config["simulation"]["length"])
-#     env.run(until=sim_length)
-#
-#     export_container_events_to_three_csvs(output_dir, "container")
-#     print(f"Simulation costs {(time.time() - start_time):.2f} s. Results saved!")
-#
-#
-# if __name__ == "__main__":
-#     main()
+def main():
+    random.seed(42)
+    env = simpy.Environment()
+    start_time = time.time()
+
+    input_config_yaml = "input/config.yaml"
+    config = load_config(input_config_yaml)
+    output_dir = "output/ContainerLog/"
+    os.makedirs(output_dir, exist_ok=True)
+
+    terminal = Terminal(env, config)
+    # env.process(prestage_containers_at_t0(env, terminal, config))
+    timetable = generate_timetable(config, verbose=False)
+
+    for entry in timetable:
+        if entry["mode"] in ["train", "vessel"]:
+            env.process(train_vessel_arrival_process(env, terminal, entry))
+        elif entry["mode"] == "truck":
+            env.process(truck_arrival_process(env, terminal, entry))
+
+    sim_length = float(config["simulation"]["length"])
+    env.run(until=sim_length)
+
+    export_container_events_to_three_csvs(output_dir, "container")
+    print(f"Simulation costs {(time.time() - start_time):.2f} s. Results saved!")
+
+
+if __name__ == "__main__":
+    main()

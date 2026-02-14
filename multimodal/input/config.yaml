@@ -1,5 +1,5 @@
 simulation:
-  length: 672           # total of weeks; 3-weeks: 24*21=504 or 4-weeks: 24*28=672
+  length: 700          # total of weeks; 3-weeks: 24*21=504 or 4-weeks: 24*28=672
   analyze_start: 168    # beg of week 2; 24*7=168
   analyze_end: 336      # end of week 2; 24*14=336
   random_seed: 42
@@ -13,23 +13,19 @@ timetable:
       truck: 0.5
   train:
     enabled: true
-    weekly_num: 5           # 5-train arrives per week
     batch_size: 100
-    destination_split:
-      vessel: 0.5
-      truck: 0.5
   truck:
     enabled: true
     batch_size: 1         # single-stacked
 terminal:                 # terminal resources
   cranes_per_berth: 12
   cranes_per_track: 4
-  hostler_number: 10000
+  hostler_number: 600
   hostler_diesel_percentage: 1
 yard:
   yard_type: parallel
   berth_number: 3
-  track_number: 100
+  track_number: 10
   receiving_track_numbers: 10
   railcar_length: 60
   d_f: 15
