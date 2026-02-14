@@ -160,8 +160,8 @@ class DistanceModel:
 
         P = 12 * FT_TO_M
         l_c = 60 * FT_TO_M
-        d_f = float(yard_cfg["d_f"]) * FT_TO_M
-        d_x = float(yard_cfg["d_x"]) * FT_TO_M
+        d_f = 15 * FT_TO_M
+        d_x = 15 * FT_TO_M
 
         yard_type = str(yard_cfg["yard_type"]).lower()
 
@@ -304,3 +304,6 @@ class DistanceModel:
             raise ValueError(f"oc_move expects destination_mode train/vessel, got {destination_mode}")
 
         raise ValueError(f"Unknown stage: {stage}")
+
+    def get_truck_path(self, stage=None):
+        return ["truck"]

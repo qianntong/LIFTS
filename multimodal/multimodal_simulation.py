@@ -69,8 +69,6 @@ class Terminal:
         self.yard_type = yard_cfg["yard_type"]
         self.receiving_track_numbers = int(yard_cfg["receiving_track_numbers"])
         self.railcar_length = float(yard_cfg["railcar_length"])
-        self.d_f = float(yard_cfg["d_f"])
-        self.d_x = float(yard_cfg["d_x"])
 
         self.hostler_number = int(term_cfg["hostler_number"])
         self.hostler_diesel_percentage = float(term_cfg["hostler_diesel_percentage"])
@@ -78,7 +76,7 @@ class Terminal:
         self.out_gate_numbers = int(gate_cfg["out_gate_numbers"])
 
         # tracks cranes
-        self.track_number = int(yard_cfg["track_number"])
+        self.track_number = 10
         self.tracks = simpy.Store(env, capacity=self.track_number)
         for track_id in range(1, self.track_number + 1):
             self.tracks.put(track_id)
@@ -392,8 +390,8 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
         truck = yield terminal.truck_pool.get()
         ic.destination_id = truck.id
         # travel_time_to_gate = 0.04
-        dist = dm.sample_distance("truck")
-        travel_time_to_gate = dm.compute_travel_time(dist,len(terminal.truck_pool.items),"truck")
+        dist = dm.get_truck_path("truck")
+        travel_time_to_gate = dm.compute_travel_time_hr(dist,len(terminal.truck_pool.items),"truck")
         yield env.timeout(travel_time_to_gate)
         record_event(ic, "departure", env.now)
         yield terminal.truck_pool.put(truck)
@@ -591,8 +589,8 @@ def truck_arrival_process(env, terminal, arrival_entry):
     with terminal.in_gates.request() as req:
         yield req
         yield env.timeout(terminal.TRUCK_INGATE_TIME)
-        dist = dm.sample_distance("truck")
-        travel_time_to_gate = dm.compute_travel_time(dist, len(terminal.truck_pool.items), "truck")
+        dist = dm.get_truck_path("ic_move")
+        travel_time_to_gate = dm.compute_travel_time_hr(dist, len(terminal.truck_pool.items), "truck")
         yield env.timeout(travel_time_to_gate)
 
     yield terminal.container_stack.put(container)
@@ -732,7 +730,7 @@ def main():
 
     terminal = Terminal(env, config)
     # env.process(prestage_containers_at_t0(env, terminal, config))
-    timetable = generate_timetable(config, verbose=False)
+    timetable = generate_timetable(config, terminal, verbose=False)
 
     for entry in timetable:
         if entry["mode"] in ["train", "vessel"]:

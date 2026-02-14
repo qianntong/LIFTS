@@ -25,11 +25,8 @@ terminal:                 # terminal resources
 yard:
   yard_type: parallel
   berth_number: 3
-  track_number: 10
   receiving_track_numbers: 10
   railcar_length: 60
-  d_f: 15
-  d_x: 15
 gates:
   in_gate_numbers: 500
   out_gate_numbers: 500

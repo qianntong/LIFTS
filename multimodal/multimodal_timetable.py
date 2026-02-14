@@ -1,5 +1,6 @@
 import math
 from collections import defaultdict
+from multimodal_simulation import *
 
 def calculate_weekly_balancing_params(vessel_batch, p_v_to_t, train_batch_size):
     """
@@ -54,7 +55,7 @@ def _sample_week_times(start, end, n):
     return [start + (i + 0.5) * step for i in range(n)]
 
 
-def generate_timetable(config, verbose=True):
+def generate_timetable(config, terminal, verbose=True):
     """
     Return: list[dict] timetable entries, each entry includes:
       - mode, arrival_id, arrival_time, batch_size, destination_split, week
@@ -95,6 +96,8 @@ def generate_timetable(config, verbose=True):
             p_v_to_t=p_v_to_t,
             train_batch_size=train_batch_size,
         )
+
+        terminal.track_number = 10
 
         # ---- derive endogenous splits for train/truck ----
         # Train inbound split (train -> vessel / truck)
