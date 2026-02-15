@@ -65,6 +65,7 @@ class Terminal:
 
         self.analyze_start = simul_cfg["analyze_start"]
         self.analyze_end = simul_cfg["analyze_end"]
+        self.simul_weeks = simul_cfg["simul_weeks"]
 
         self.yard_type = yard_cfg["yard_type"]
         self.receiving_track_numbers = int(yard_cfg["receiving_track_numbers"])
@@ -391,7 +392,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
         ic.destination_id = truck.id
         # travel_time_to_gate = 0.04
         dist = dm.get_truck_path("truck")
-        travel_time_to_gate = dm.compute_travel_time_hr(dist,len(terminal.truck_pool.items),"truck")
+        travel_time_to_gate = dm.compute_travel_time_hr(dist,len(terminal.truck_pool.items)/terminal.simul_weeks,"truck")
         yield env.timeout(travel_time_to_gate)
         record_event(ic, "departure", env.now)
         yield terminal.truck_pool.put(truck)
@@ -433,12 +434,12 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     if not any(ctx.is_inbound(c) for c in chassis_store.items):
         if not ctx.ic_cleared.triggered:
             ctx.ic_cleared.succeed()
-            print(f"[{env.now:.2f}] All IC cleared from chassis for {ctx}")
+            # print(f"[{env.now:.2f}] All IC cleared from chassis for {ctx}")
 
     # 9. OC ready check
     if not ctx.oc_ready.triggered and check_oc_ready(ctx, chassis_store):
         ctx.oc_ready.succeed()
-        print(f"[{env.now:.2f}] {ctx} OC ready on chassis")
+        # print(f"[{env.now:.2f}] {ctx} OC ready on chassis")
 
 
 def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
@@ -474,7 +475,7 @@ def crane_unload_inbound_process(env, terminal, mode, ctx, inbound_containers):
         remaining -= 1
         if remaining == 0 and not ctx.ic_unloaded.triggered:
             ctx.ic_unloaded.succeed()
-            print(f"[{env.now:.2f}] {ctx} IC unloaded to chassis")
+            # print(f"[{env.now:.2f}] {ctx} IC unloaded to chassis")
 
     for c in inbound_containers:
         env.process(unload_one(c))
@@ -529,7 +530,7 @@ def crane_load_outbound_process(env, terminal, ctx, chassis_store):
 
     if not ctx.oc_loaded.triggered:
         ctx.oc_loaded.succeed()
-        print(f"[{env.now:.2f}] {ctx} OC loaded")
+        # print(f"[{env.now:.2f}] {ctx} OC loaded")
 
 
 def train_vessel_arrival_process(env, terminal, arrival_entry):
@@ -590,7 +591,7 @@ def truck_arrival_process(env, terminal, arrival_entry):
         yield req
         yield env.timeout(terminal.TRUCK_INGATE_TIME)
         dist = dm.get_truck_path("ic_move")
-        travel_time_to_gate = dm.compute_travel_time_hr(dist, len(terminal.truck_pool.items), "truck")
+        travel_time_to_gate = dm.compute_travel_time_hr(dist, len(terminal.truck_pool.items)/terminal.simul_weeks, "truck")
         yield env.timeout(travel_time_to_gate)
 
     yield terminal.container_stack.put(container)
@@ -730,7 +731,7 @@ def main():
 
     terminal = Terminal(env, config)
     # env.process(prestage_containers_at_t0(env, terminal, config))
-    timetable = generate_timetable(config, terminal, verbose=False)
+    timetable, weekly_summary = generate_timetable(config, terminal, verbose=False)
 
     for entry in timetable:
         if entry["mode"] in ["train", "vessel"]:
@@ -743,6 +744,8 @@ def main():
 
     export_container_events_to_three_csvs(output_dir, "container")
     print(f"Simulation costs {(time.time() - start_time):.2f} s. Results saved!")
+
+    return weekly_summary
 
 
 if __name__ == "__main__":

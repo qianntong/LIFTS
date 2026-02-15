@@ -1,6 +1,4 @@
 import json
-import time
-import numpy as np
 from multimodal_simulation import *
 from multimodal_stats import compute_all_metrics, flatten_mode_combo_stats
 
@@ -10,10 +8,6 @@ def run_experiment(random_seed, config_snapshot, run_id, run_dir=None):
     Run ONE simulation
         compute container process & delay time metrics for various mode combos.
     """
-
-    # random.seed(random_seed)
-    # np.random.seed(random_seed)
-
     container_events.clear()
     assert len(container_events) == 0, "[WARNING] container_events NOT cleared before run!!!!"
 
@@ -31,7 +25,7 @@ def run_experiment(random_seed, config_snapshot, run_id, run_dir=None):
         env = simpy.Environment()
 
         terminal = Terminal(env, config_snapshot)
-        timetable = generate_timetable(config_snapshot) # verbose=True
+        timetable, weekly_summary = generate_timetable(config_snapshot,terminal) # verbose=True
 
         # Dump timetable
         if run_dir is not None:
@@ -93,6 +87,7 @@ def run_experiment(random_seed, config_snapshot, run_id, run_dir=None):
     return {
         "metadata": metadata,
         "metrics": metrics,
+        "weekly_summary": weekly_summary,
     }
 
 

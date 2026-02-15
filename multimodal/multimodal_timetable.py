@@ -55,7 +55,7 @@ def _sample_week_times(start, end, n):
     return [start + (i + 0.5) * step for i in range(n)]
 
 
-def generate_timetable(config, terminal, verbose=True):
+def generate_timetable(config, terminal, verbose=None):
     """
     Return: list[dict] timetable entries, each entry includes:
       - mode, arrival_id, arrival_time, batch_size, destination_split, week
@@ -78,6 +78,13 @@ def generate_timetable(config, terminal, verbose=True):
     train_batch_size = int(train_cfg["batch_size"])
     WEEK_LENGTH = 168.0
 
+    # written as matrix header
+    weekly_summary = {
+        "train_weekly_num": 0,
+        "train_batch_size": train_batch_size,
+        "truck_weekly_volume": 0,
+    }
+
     max_week = int(sim_length // WEEK_LENGTH)
 
     timetable = []
@@ -96,8 +103,9 @@ def generate_timetable(config, terminal, verbose=True):
             p_v_to_t=p_v_to_t,
             train_batch_size=train_batch_size,
         )
-
-        terminal.track_number = 10
+        weekly_summary["train_weekly_num"] = flows["train_trips"]
+        weekly_summary["truck_weekly_volume"] = flows["truck_total"]
+        terminal.track_number = flows["train_trips"]
 
         # ---- derive endogenous splits for train/truck ----
         # Train inbound split (train -> vessel / truck)
@@ -138,7 +146,7 @@ def generate_timetable(config, terminal, verbose=True):
                 "week": w,
             })
 
-        # ---- Train arrivals (endogenous count) ----
+        # ---- Train arrivals ----
         t_times = _sample_week_times(week_start, week_end, flows["train_trips"])
         for t in t_times:
             arrival_counter["train"] += 1
@@ -151,7 +159,7 @@ def generate_timetable(config, terminal, verbose=True):
                 "week": w,
             })
 
-        # ---- Truck arrivals (endogenous count) ----
+        # ---- Truck arrivals----
         truck_times = _sample_week_times(week_start, week_end, flows["truck_total"])
         for t in truck_times:
             arrival_counter["truck"] += 1
@@ -166,13 +174,13 @@ def generate_timetable(config, terminal, verbose=True):
 
     timetable.sort(key=lambda x: x["arrival_time"])
 
-    log("================ FINAL ARRIVAL COUNTS ================")
-    log(f"  Vessel arrivals total = {arrival_counter['vessel']}")
-    log(f"  Train  arrivals total = {arrival_counter['train']}")
-    log(f"  Truck  arrivals total = {arrival_counter['truck']}")
-    log("=====================================================\n")
+    # log("================ FINAL ARRIVAL COUNTS ================")
+    # log(f"  Vessel arrivals total = {arrival_counter['vessel']}")
+    # log(f"  Train  arrivals total = {arrival_counter['train']}")
+    # log(f"  Truck  arrivals total = {arrival_counter['truck']}")
+    # log("=====================================================\n")
 
-    return timetable
+    return timetable, weekly_summary
 
 
 def export_mode_timetable_txt(timetable, mode, filepath, max_rows_per_week=None):

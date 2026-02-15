@@ -101,7 +101,6 @@ def _compute_mode_combo_level(events):
 
         key = (origin_mode, dest_mode)
 
-        # 1) Processing time
         if (
             arrival_actual is not None and
             departure is not None and
@@ -112,26 +111,12 @@ def _compute_mode_combo_level(events):
             if np.isfinite(processing_time):
                 buckets[key]["processing"].append(processing_time)
 
-        # 2) Delay time (arrival-side, only train / vessel)
-        if (
-            origin_mode in {"train", "vessel"} and
-            arrival_actual is not None and
-            arrival_expected is not None and
-            np.isfinite(arrival_actual) and
-            np.isfinite(arrival_expected)
-        ):
-            delay = arrival_actual - arrival_expected
-            if np.isfinite(delay):
-                buckets[key]["delay"].append(delay)
-
     # summarize
     combo_stats = {}
     for (origin, dest), b in buckets.items():
         combo_stats[(origin, dest)] = {
             "avg_container_processing_time": _summarize_list(b["processing"]),
-            "delay_time": _summarize_list(b["delay"]),
         }
-
     return combo_stats
 
 

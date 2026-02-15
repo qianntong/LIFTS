@@ -6,7 +6,6 @@ from typing import Optional, List
 
 
 FT_TO_M = 1/3.28
-MPH_TO_MPS = 0.44704
 
 
 def load_config(config_path: str) -> dict:
@@ -166,21 +165,17 @@ class DistanceModel:
         yard_type = str(yard_cfg["yard_type"]).lower()
 
         if yard_type == "parallel":
-            # 1) truck: use the exact formula you stated
+            # 1) truck
             d_t_min = 0.5 * n_p * P
             d_t_max = (self.total_lane_length / (N + 1)) + (self.total_lane_length / (M + 1)) - 2 * n_p * P
             self.d_truck = (d_t_min, d_t_max)
 
-            # 2) hostler generic (yard movement) -> we'll use same bounds as truck by default
-            #    If you later want different bounds, define them separately.
+            # 2) hostler generic (yard movement)
             self.d_hostler = (d_t_min, d_t_max)
 
             # 3) reposition
             d_r_min = 5 * n_r * FT_TO_M + 40 * FT_TO_M
-            d_r_max = (
-                ugly_sigma(M) * (10 * n_r * FT_TO_M + n_p * P)
-                + ugly_sigma(N) * (80 * FT_TO_M + n_p * P)
-            )
+            d_r_max = (ugly_sigma(M) * (10 * n_r * FT_TO_M + n_p * P) + ugly_sigma(N) * (80 * FT_TO_M + n_p * P))
             self.d_reposition = (d_r_min, d_r_max)
 
             # 4) intertrack (triangular)
@@ -245,11 +240,9 @@ class DistanceModel:
 
         raise ValueError(f"Unknown distance mode: {mode}")
 
-    # Travel time
     def compute_travel_time_s(self, distance_m: float, current_veh_num: int, vehicle_type: str) -> float:
         density = current_veh_num / (self.total_lane_length * FT_TO_M)
-        speed_mph = speed_density(density, vehicle_type, self.N)
-        speed_mps = speed_mph * MPH_TO_MPS
+        speed_mps = speed_density(density, vehicle_type, self.N)
         travel_time_s = distance_m / speed_mps
         return travel_time_s
 
