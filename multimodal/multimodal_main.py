@@ -31,17 +31,17 @@ def generate_splits(step=0.1):
 
 
 def estimate_hostler_number(hostler_cycle_time_hr, cranes_per_berth, cranes_per_track):
-    x = hostler_cycle_time_hr * 30 * (cranes_per_berth + cranes_per_track)
+    x = hostler_cycle_time_hr * 30 * (cranes_per_berth * 2 + cranes_per_track * 10)  #  30x = x / (2/60)
     return max(1, int(math.ceil(x)))
 
 
 def generate_overrides():
 
-    CRANES_PER_BERTH_LIST = [2, 10]    # list(range(1, 11))
-    CRANES_PER_TRACK_LIST = [2, 5]    # list(range(1, 6))
-    VESSEL_BATCH_LIST = [1200]  # list(range(1000, 4001, 100))
+    CRANES_PER_BERTH_LIST = list(range(1, 11))
+    CRANES_PER_TRACK_LIST =  list(range(1, 6))
+    VESSEL_BATCH_LIST = list(range(1000, 4001, 250))
 
-    HOSTLER_CYCLE_TIME_HR = 3
+    HOSTLER_CYCLE_TIME_HR = 10
 
     for vessel_batch in VESSEL_BATCH_LIST:
         for split in generate_splits(step=0.1):

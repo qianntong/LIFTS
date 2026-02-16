@@ -133,7 +133,7 @@ def generate_timetable(config, terminal, verbose=None):
         log(f"  train_split={train_split}")
         log(f"  truck_split={truck_split}\n")
 
-        # ---- Vessel arrivals (usually 1/week) ----
+        # ---- Vessel arrivals ----
         v_times = _sample_week_times(week_start, week_end, vessel_weekly_num)
         for t in v_times:
             arrival_counter["vessel"] += 1
@@ -174,11 +174,11 @@ def generate_timetable(config, terminal, verbose=None):
 
     timetable.sort(key=lambda x: x["arrival_time"])
 
-    # log("================ FINAL ARRIVAL COUNTS ================")
-    # log(f"  Vessel arrivals total = {arrival_counter['vessel']}")
-    # log(f"  Train  arrivals total = {arrival_counter['train']}")
-    # log(f"  Truck  arrivals total = {arrival_counter['truck']}")
-    # log("=====================================================\n")
+    log("================ FINAL ARRIVAL COUNTS ================")
+    log(f"  Vessel arrivals total = {arrival_counter['vessel']}")
+    log(f"  Train  arrivals total = {arrival_counter['train']}")
+    log(f"  Truck  arrivals total = {arrival_counter['truck']}")
+    log("=====================================================\n")
 
     return timetable, weekly_summary
 
