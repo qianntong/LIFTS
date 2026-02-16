@@ -91,7 +91,7 @@ def get_experiment_csv_header():
         "vessel_to_truck_share",
     ]
 
-    # ---- derived demand ----
+    # ---- demand ----
     header += [
         "train_weekly_num",
         "train_batch_size",

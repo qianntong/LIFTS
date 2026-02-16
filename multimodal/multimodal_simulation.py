@@ -392,7 +392,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
         ic.destination_id = truck.id
         # travel_time_to_gate = 0.04
         dist = dm.get_truck_path("truck")
-        travel_time_to_gate = dm.compute_travel_time_hr(dist,len(terminal.truck_pool.items)/terminal.simul_weeks,"truck")
+        travel_time_to_gate = dm.compute_travel_time_hr(dist,len(terminal.hostler_pool.items),"truck")
         yield env.timeout(travel_time_to_gate)
         record_event(ic, "departure", env.now)
         yield terminal.truck_pool.put(truck)
@@ -591,7 +591,7 @@ def truck_arrival_process(env, terminal, arrival_entry):
         yield req
         yield env.timeout(terminal.TRUCK_INGATE_TIME)
         dist = dm.get_truck_path("ic_move")
-        travel_time_to_gate = dm.compute_travel_time_hr(dist, len(terminal.truck_pool.items)/terminal.simul_weeks, "truck")
+        travel_time_to_gate = dm.compute_travel_time_hr(dist, len(terminal.hostler_pool.items), "truck")
         yield env.timeout(travel_time_to_gate)
 
     yield terminal.container_stack.put(container)

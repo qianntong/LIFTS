@@ -8,7 +8,7 @@ timetable:
   vessel:
     enabled: true         # false to disable mode generation (i.e. intermodal terminal)
     weekly_num: 1          # one-vessel arrives per week
-    batch_size: 1000
+    batch_size: 3000
     destination_split:
       train: 0.5
       truck: 0.5
@@ -19,9 +19,9 @@ timetable:
     enabled: true
     batch_size: 1         # single-stacked
 terminal:                 # terminal resources
-  cranes_per_berth: 12
+  cranes_per_berth: 10
   cranes_per_track: 4
-  hostler_number: 600
+  hostler_number: 1000
   hostler_diesel_percentage: 1
 yard:
   yard_type: parallel
