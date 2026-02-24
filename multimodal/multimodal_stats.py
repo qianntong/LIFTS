@@ -128,8 +128,7 @@ def flatten_mode_combo_stats(mode_combo_stats):
         for metric_name, stat_dict in metrics.items():
             for stat, value in stat_dict.items():
                 col = f"{prefix}__{metric_name}__{stat}"
-                flat[col] = value
-
+                flat[col] = round(value, 2)
     return flat
 
 

@@ -151,7 +151,7 @@ class Terminal:
         self.out_gates = simpy.Resource(env, capacity=self.out_gate_numbers)
 
         self.VEHICLE_TRAVEL_TIME = 1 / 600
-        self.CONTAINERS_PER_CRANE_MOVE_MEAN = 2 / 60
+        self.CONTAINERS_PER_CRANE_MOVE_MEAN = 0.028
         self.CRANE_MOVE_DEV_TIME = 1 / 3600
         self.TRUCK_DIESEL_PERCENTAGE = 1
         self.TRUCK_INGATE_TIME = 2 / 60
@@ -376,6 +376,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     ic_path = dm.get_hostler_path(origin_mode=ic.origin_mode,destination_mode=None,stage="ic_move")
     park_chassis_travel_time = dm.compute_travel_time_hr(ic_path,len(terminal.hostler_pool.items),"hostler")
     yield env.timeout(park_chassis_travel_time)
+    # yield env.timeout(0.05)
 
     yield chassis_store.get(lambda c: c == ic)
     record_event(ic, "hostler_IC_pick_up", env.now)
@@ -384,13 +385,14 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     ic_path = dm.get_hostler_path(origin_mode=ic.origin_mode, destination_mode=None, stage="ic_move")
     chassis_stack_travel_time = dm.compute_travel_time_hr(ic_path, len(terminal.hostler_pool.items), "hostler")
     yield env.timeout(chassis_stack_travel_time)
+    # yield env.timeout(0.05)
     record_event(ic, "hostler_IC_drop_off", env.now)
 
     # 4. IC dropped and picked up by trucks
     if ic.destination_mode == "truck":
         truck = yield terminal.truck_pool.get()
         ic.destination_id = truck.id
-        # travel_time_to_gate = 0.04
+        # yield env.timeout(0.05)
         dist = dm.get_truck_path("truck")
         travel_time_to_gate = dm.compute_travel_time_hr(dist,len(terminal.hostler_pool.items),"truck")
         yield env.timeout(travel_time_to_gate)
@@ -404,6 +406,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     # # 5. find OC (FIFO among matches) and bind destination
     reposition_time = dm.compute_travel_time_hr(["hostler_reposition"],len(terminal.hostler_pool.items), "hostler") # hostler repositioning to find OC
     yield env.timeout(reposition_time)
+    # yield env.timeout(0.02)
     oc = yield terminal.container_stack.get(lambda c: (c.destination_mode == ic.origin_mode and c.destination_id is None))
     oc.destination_id = ic.origin_id
     record_event(oc, "hostler_OC_pick_up", env.now)
@@ -424,6 +427,7 @@ def hostler_ic_oc_truck_process(env, terminal, chassis_store, ctx, ic):
     oc_path = dm.get_hostler_path(origin_mode=None, destination_mode=oc.destination_mode, stage="oc_move")
     chassis_stack_travel_time = dm.compute_travel_time_hr(oc_path, len(terminal.hostler_pool.items),"hostler")
     yield env.timeout(chassis_stack_travel_time)
+    # yield env.timeout(0.05)
     yield chassis_store.put(oc)
     record_event(oc, "hostler_OC_drop_off", env.now)
 
@@ -522,7 +526,8 @@ def crane_load_outbound_process(env, terminal, ctx, chassis_store):
             ctx.loaded_containers.append(outbound)
             record_event(outbound, "chassis_OC_load", env.now)
         finally:
-            yield crane_pool.put(crane)
+            crane_pool.put(crane)
+            # yield crane_pool.put(crane)
 
     # Launch parallel crane moves
     procs = [env.process(load_one()) for _ in range(ctx.batch_size)]
@@ -593,6 +598,7 @@ def truck_arrival_process(env, terminal, arrival_entry):
         dist = dm.get_truck_path("ic_move")
         travel_time_to_gate = dm.compute_travel_time_hr(dist, len(terminal.hostler_pool.items), "truck")
         yield env.timeout(travel_time_to_gate)
+        # yield env.timeout(0.05)
 
     yield terminal.container_stack.put(container)
     record_event(container, "arrival_actual", env.now)

@@ -19,8 +19,8 @@ def deep_merge(base, override):
 
 
 def generate_splits(step=0.1):
-    p = step
-    while p <= 1.0 + 1e-9:
+    p = 0.2
+    while p <= 0.6:
         yield {
             "vessel": {
                 "train": round(p, 2),
@@ -31,26 +31,24 @@ def generate_splits(step=0.1):
 
 
 def estimate_hostler_number(hostler_cycle_time_hr, cranes_per_berth, cranes_per_track):
-    x = hostler_cycle_time_hr * 30 * (cranes_per_berth * 2 + cranes_per_track * 10)  #  30x = x / (2/60)
+    x = hostler_cycle_time_hr * 30 * (cranes_per_berth + cranes_per_track)  #  30x = x / (2/60)
     return max(1, int(math.ceil(x)))
 
 
 def generate_overrides():
 
-    CRANES_PER_BERTH_LIST = list(range(1, 11))
-    CRANES_PER_TRACK_LIST =  list(range(1, 6))
-    VESSEL_BATCH_LIST = list(range(1000, 4001, 250))
+    CRANES_PER_BERTH_LIST = list(range(2))
+    CRANES_PER_TRACK_LIST =  list(range(2, 11))
+    VESSEL_BATCH_LIST = list(range(1100, 1101, 350))
 
-    HOSTLER_CYCLE_TIME_HR = 10
 
     for vessel_batch in VESSEL_BATCH_LIST:
         for split in generate_splits(step=0.1):
             for cpb in CRANES_PER_BERTH_LIST:
                 for cpt in CRANES_PER_TRACK_LIST:
-
-                    hostler_number = estimate_hostler_number(
-                        HOSTLER_CYCLE_TIME_HR, cpb, cpt
-                    )
+                    HOSTLER_CYCLE_TIME_HR = 0.5 + (vessel_batch/1000)
+                    num_trains = math.floor(vessel_batch * split["vessel"]["train"]/100)
+                    hostler_number = HOSTLER_CYCLE_TIME_HR / 0.028  * (cpb * 2 + cpt * num_trains)   #600
 
                     yield {
                         "timetable": {
@@ -182,7 +180,7 @@ def flatten_metrics_to_row(run_meta, override, metrics, config_snapshot, weekly_
         for metric_name, stat_dict in metric_block.items():
             for stat_name, value in stat_dict.items():
                 col = f"{orig}_to_{dest}.{metric_name}.{stat_name}"
-                row[col] = value
+                row[col] = round(value,2)
 
     return row
 

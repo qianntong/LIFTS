@@ -86,12 +86,13 @@ def ugly_sigma(x: int) -> float:
 def speed_density(avg_density: float, vehicle_type: str, N: int) -> float:
     """
     avg_density: veh/m
-    return speed in mph
+    return speed in mps
     """
     if vehicle_type == "hostler":
         return 7.5 * math.exp((-1.5 * N - 0.5) * avg_density)
     if vehicle_type == "truck":
         return 10 * math.exp((-3.5 * N - 0.5) * avg_density)
+
     raise ValueError("vehicle_type must be 'truck' or 'hostler'")
 
 
@@ -131,7 +132,7 @@ class DistanceModel:
 
         self.A_yard = A_yard
         self.B_yard = B_yard
-        self.total_lane_length = A_yard * (N + 1) + B_yard * (M + 1)
+        self.total_lane_length = 12
 
         self.N = N
 

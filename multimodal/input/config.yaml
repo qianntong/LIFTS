@@ -8,10 +8,10 @@ timetable:
   vessel:
     enabled: true         # false to disable mode generation (i.e. intermodal terminal)
     weekly_num: 1          # one-vessel arrives per week
-    batch_size: 3000
+    batch_size: 1100
     destination_split:
-      train: 0.5
-      truck: 0.5
+      train: 0.6
+      truck: 0.4
   train:
     enabled: true
     batch_size: 100

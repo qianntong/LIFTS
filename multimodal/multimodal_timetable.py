@@ -48,11 +48,24 @@ def calculate_weekly_balancing_params(vessel_batch, p_v_to_t, train_batch_size):
     }
 
 
+# def _sample_week_times(start, end, n):
+#     if n <= 0:
+#         return []
+#     step = (end - start) / n
+#     return [start + (i + 0.5) * step for i in range(n)]
+
+
 def _sample_week_times(start, end, n):
     if n <= 0:
         return []
     step = (end - start) / n
-    return [start + (i + 0.5) * step for i in range(n)]
+    return [start + i * step for i in range(n)]
+
+def _truck_week_times(start, n):
+    if n <= 0:
+        return []
+    step = 0
+    return [start + i * step for i in range(n)]
 
 
 def generate_timetable(config, terminal, verbose=None):
@@ -160,7 +173,7 @@ def generate_timetable(config, terminal, verbose=None):
             })
 
         # ---- Truck arrivals----
-        truck_times = _sample_week_times(week_start, week_end, flows["truck_total"])
+        truck_times = _truck_week_times(week_start, flows["truck_total"])
         for t in truck_times:
             arrival_counter["truck"] += 1
             timetable.append({
@@ -208,3 +221,66 @@ def export_mode_timetable_txt(timetable, mode, filepath, max_rows_per_week=None)
                 )
                 f.write(line + "\n")
             f.write("\n")
+
+
+# # Test
+# import math
+# from collections import defaultdict, Counter
+#
+# class DummyTerminal:
+#     def __init__(self, track_number):
+#         self.track_number = track_number
+#
+#
+# if __name__ == "__main__":
+#
+#     config = {
+#         "simulation": {
+#             "length": 168 * 2  # 2 weeks
+#         },
+#         "terminal": {
+#             "track_number": 4
+#         },
+#         "timetable": {
+#             "vessel": {
+#                 "weekly_num": 1,
+#                 "batch_size": 1000,
+#                 "destination_split": {
+#                     "train": 0.5,
+#                     "truck": 0.5
+#                 }
+#             },
+#             "train": {
+#                 "batch_size": 100
+#             },
+#             "truck": {
+#                 "batch_size": 1
+#             }
+#         }
+#     }
+#
+#     terminal = DummyTerminal(
+#         track_number=config["terminal"]["track_number"]
+#     )
+#
+#     timetable, weekly_summary = generate_timetable(
+#         config=config,
+#         terminal=terminal,
+#         verbose=True
+#     )
+#
+#     print("\n========== TERMINAL INFO ==========")
+#     print("Track number:", terminal.track_number)
+#
+#     print("\n========== WEEKLY SUMMARY ==========")
+#     print(weekly_summary)
+#
+#     print("\n========== MODE COUNTS ==========")
+#     mode_count = Counter([e["mode"] for e in timetable])
+#     print(mode_count)
+#
+#     print("\n========== FIRST 10 EVENTS ==========")
+#     for e in timetable[:10]:
+#         print(e)
+#
+#     print("\nTotal events:", len(timetable))

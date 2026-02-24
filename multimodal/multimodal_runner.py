@@ -1,7 +1,7 @@
 import json
 from multimodal_simulation import *
 from multimodal_stats import compute_all_metrics, flatten_mode_combo_stats
-
+from multimodal_timetable import *
 
 def run_experiment(random_seed, config_snapshot, run_id, run_dir=None):
     """
@@ -19,6 +19,7 @@ def run_experiment(random_seed, config_snapshot, run_id, run_dir=None):
         "error_message": "",
     }
 
+    weekly_summary = {}
     start_time = time.perf_counter()
 
     try:
